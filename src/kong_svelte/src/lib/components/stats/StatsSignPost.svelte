@@ -64,4 +64,9 @@
       transform: translateX(0%);
     }
   }
+
+  .wobble {
+    animation: wobble 0.8s ease-in-out;
+  }
+
 </style>

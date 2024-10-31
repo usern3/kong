@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fly, fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { browser } from "$app/environment";
   import { walletStore } from "$lib/stores/walletStore";
   import Panel from "../common/Panel.svelte";
@@ -9,6 +9,7 @@
   import SidebarHeader from "./sidebar/SidebarHeader.svelte";
   import SocialSection from "./sidebar/SocialSection.svelte";
   import TokenList from "./sidebar/TokenList.svelte";
+  import { TokenService } from "$lib/services/TokenService";
 
   export let sidebarOpen: boolean;
   export let onClose: () => void;
@@ -69,6 +70,11 @@
       window.addEventListener("resize", resizeHandler);
     }
   }
+
+  onMount(async () => {
+    const balances = await TokenService.getTokenBalances();
+    console.log("balances", balances);
+  });
 
   onDestroy(() => {
     if (browser) {

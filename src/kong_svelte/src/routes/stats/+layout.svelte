@@ -1,5 +1,5 @@
 <script lang="ts">
-  import "../app.css";
+  import Clouds from "$lib/components/stats/Clouds.svelte";
   import { onMount } from "svelte";
   import { t } from "$lib/locales/translations";
   import { restoreWalletConnection } from "$lib/stores/walletStore";
@@ -9,13 +9,10 @@
 
   onMount(async () => {
     switchLocale("en");
-    await restoreWalletConnection();
+    Promise.all([restoreWalletConnection()]);
   });
 </script>
 
-<div class="flex justify-center">
-  <Navbar />
-</div>
 
 <svelte:head>
   <title>
@@ -25,12 +22,25 @@
   </title>
 </svelte:head>
 
-<slot />
+<div class="flex justify-center">
+  <Navbar />
+</div>
 
-<style scoped>
-  :global(body) {
-    background: #000000 url("/backgrounds/kong_jungle.webp") no-repeat center
-      center fixed;
+<Clouds />
+
+<main class="flex min-h-[95vh] bg-sky-100 relative pt-28">
+  <slot />
+</main>
+
+<div
+  style="background-image:url('/backgrounds/grass.webp'); background-repeat: repeat-x; background-size: 100% 100%; z-index: 1000;"
+  class="w-full min-h-[80px] max-h-[80px]"
+/>
+
+<style>
+  main {
+    background-color: #5bb2cf;
     background-size: cover;
+    background-position: center;
   }
 </style>

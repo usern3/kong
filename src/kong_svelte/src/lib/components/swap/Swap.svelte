@@ -3,7 +3,7 @@
     import { onMount } from 'svelte';
     import debounce from 'lodash/debounce';
     import BigNumber from 'bignumber.js';
-    import { backendService } from '$lib/services/backendService';
+    import { SwapService } from '$lib/services/SwapService';
     import { tokenStore } from '$lib/stores/tokenStore';
     import SwapPanel from '$lib/components/swap/swap_ui/SwapPanel.svelte';
     import Button from '$lib/components/common/Button.svelte';
@@ -85,7 +85,7 @@
             const payDecimals = getTokenDecimals(payToken);
             const payAmountBigInt = toBigInt(amount, payDecimals);
 
-            const quote = await backendService.swap_amounts(
+            const quote = await SwapService.getSwapAmounts(
                 payToken,
                 payAmountBigInt,
                 receiveToken

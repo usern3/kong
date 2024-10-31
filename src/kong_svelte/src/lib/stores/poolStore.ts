@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { backendService } from '$lib/services/backendService';
+import { PoolService } from '$lib/services/PoolService';
 import { isEqual } from 'lodash-es';
 import { formatPoolData } from '$lib/utils/statsUtils';
 import { type Pool } from '$lib/types/backend';
@@ -24,7 +24,7 @@ let previousPoolBalances: any = null;
  */
 export async function fetchPools() {
   try {
-    const liquidityPools = await backendService.getPools();
+    const liquidityPools = await PoolService.getPools();
     console.log('Fetched liquidityPools:', liquidityPools);
 
     if (!liquidityPools || !liquidityPools.pools) {

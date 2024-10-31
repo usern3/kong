@@ -1,7 +1,8 @@
 // src/lib/stores/tokenStore.ts
 import { writable } from 'svelte/store';
 import type { Token } from '$lib/types/backend';
-import { backendService } from '$lib/services/backendService';
+import { TokenService } from '$lib/services/TokenService';
+import { UserService } from '$lib/services/UserService';
 import type { Principal } from '@dfinity/principal';
 
 interface TokenBalance {
@@ -96,6 +97,10 @@ function createTokenStore() {
       const currentState = getCurrentState();
       return currentState.balances[symbol]?.balance || '0';
     },
+    getBalances: async () => {
+      const balances = await TokenService.getTokenBalances();
+      console.log("balances", balances);
+    },
     loadTokens: async (forceRefresh = false) => {
       const currentState = getCurrentState();
 
@@ -111,7 +116,7 @@ function createTokenStore() {
       update(s => ({ ...s, isLoading: true }));
       
       try {
-        const tokens = await backendService.getTokens();
+        const tokens = await TokenService.getTokens();
         
         if (!Array.isArray(tokens)) {
           throw new Error('Invalid tokens response');
@@ -122,7 +127,7 @@ function createTokenStore() {
           tokens.map(async (token) => {
             try {
               if (hasCanisterId(token)) {
-                const logo = await backendService.getIcrcLogFromMetadata(token.canisterId);
+                const logo = await TokenService.getIcrcLogFromMetadata(token.canisterId);
                 return { ...token, logo };
               }
               console.warn('Token missing canisterId:', token);
@@ -161,8 +166,8 @@ function createTokenStore() {
 
       try {
         const [balances, prices] = await Promise.all([
-          backendService.getUserBalances(principal),
-          backendService.getTokenPrices()
+          UserService.getUserBalances(),
+          TokenService.getTokenPrices()
         ]);
         
         let totalValueUsd = 0;

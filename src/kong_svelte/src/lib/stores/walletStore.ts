@@ -4,19 +4,24 @@ import {
   canisterId as kongBackendCanisterId,
   idlFactory as kongBackendIDL,
 } from '../../../../declarations/kong_backend'; 
+import {
+  canisterId as kongFaucetId,
+  idlFactory as kongFaucetIDL,
+} from '../../../../declarations/kong_faucet';
 import { HttpAgent, Actor, type ActorSubclass } from '@dfinity/agent';
-import { backendService } from '$lib/services/backendService';
-import { ICRC1_IDL } from "$lib/idls/icrc1.idl.js";
-import { ICRC2_IDL } from "$lib/idls/icrc2.idl.js";
+import { UserService } from '$lib/services/UserService';
+import { idlFactory as ICRC1_IDL } from "../../../../declarations/ckbtc_ledger";
+import { idlFactory as ICRC2_IDL } from "../../../../declarations/cketh_ledger";
 
 // Export the list of available wallets
 export const availableWallets = walletsList;
 
-export type CanisterType = 'kong_backend' | 'icrc1' | 'icrc2';
+export type CanisterType = 'kong_backend' | 'kong_faucet' | 'icrc1' | 'icrc2';
 
 // IDL Mappings
 export const canisterIDLs = {
   kong_backend: kongBackendIDL,
+  kong_faucet: kongFaucetIDL,
   icrc1: ICRC1_IDL,
   icrc2: ICRC2_IDL,
 }
@@ -46,7 +51,7 @@ function initializePNP() {
     const isLocalEnv = process.env.DFX_NETWORK === 'local';
     pnp = createPNP({
       hostUrl: isLocalEnv ? 'http://localhost:4943' : 'https://ic0.app',
-      whitelist: [kongBackendCanisterId],
+      whitelist: [kongBackendCanisterId, kongFaucetId],
       identityProvider: isLocalEnv
         ? 'http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:4943'
         : 'https://identity.ic0.app',
@@ -85,7 +90,7 @@ export async function connectWallet(walletId: string) {
     localStorage.setItem('selectedWalletId', walletId);
     selectedWalletId.set(walletId);
 
-    const user = await backendService.getWhoami();
+    const user = await UserService.getWhoami();
     userStore.set(user);
   } catch (error) {
     handleConnectionError(error);
@@ -133,8 +138,7 @@ export async function isConnected(): Promise<boolean> {
 
 // Create actor
 async function createActor(canisterId: string, idlFactory: any): Promise<ActorSubclass<any>> {
-  // Call initializePNP once when the module is loaded
-initializePNP();
+
   const isAuthenticated = await isConnected();
   const isLocalEnv = window.location.hostname.includes('localhost');
   const host = isLocalEnv ? 'http://localhost:4943' : 'https://ic0.app';
