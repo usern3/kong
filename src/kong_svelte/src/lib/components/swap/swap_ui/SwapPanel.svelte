@@ -6,7 +6,6 @@
   import { tokenStore, formattedTokens } from "$lib/features/tokens/tokenStore";
   import { formatTokenAmount } from "$lib/utils/numberFormatUtils";
   import { toastStore } from "$lib/stores/toastStore";
-  import BigNumber from "bignumber.js";
   import TokenImages from "$lib/components/common/TokenImages.svelte";
   
   export let title: string;
@@ -100,8 +99,12 @@
   }
 </script>
 
-<Panel variant="green" width="auto" className="token-panel">
-  <div class="panel-content" class:input-focused={inputFocused}>
+<svelte:head>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+</svelte:head>
+
+<Panel variant="green" type="main" className="token-panel">
+  <div class="panel-inner">
     <header class="panel-header">
       <div class="title-container">
         <h2 class="panel-title">{title}</h2>
@@ -137,9 +140,9 @@
           readonly={title === "You Receive"}
         />
         {#if title === "You Pay"}
-          <button class="max-button" on:click={handleMaxClick}>MAX</button>
+          <button class="max-button hide-mobile" on:click={handleMaxClick}>MAX</button>
         {:else}
-          <button class="max-button disabled-max" disabled>MAX</button>
+          <button class="max-button disabled-max hide-mobile" disabled>MAX</button>
         {/if}
         <div class="token-selector">
           <button
@@ -169,33 +172,14 @@
   </div>
 </Panel>
 
-<style>
+<style lang="postcss">
 :root {
-  --color-white: #ffffff;
-  --color-white-alpha-10: rgba(255, 255, 255, 0.1);
-  --color-white-alpha-20: rgba(255, 255, 255, 0.2);
-  --color-black-alpha-15: rgba(0, 0, 0, 0.15);
-  --color-black-alpha-25: rgba(0, 0, 0, 0.25);
-  --color-black-alpha-35: rgba(0, 0, 0, 0.35);
-  --color-black-alpha-45: rgba(0, 0, 0, 0.45);
-  --color-success: #00E676;
-  --color-success-alpha-10: rgba(0, 230, 118, 0.1);
-  --color-success-alpha-30: rgba(0, 230, 118, 0.3);
-  --color-warning: #FF1744;
-  --color-warning-alpha-05: rgba(255, 23, 68, 0.05);
-  --color-warning-alpha-10: rgba(255, 23, 68, 0.1);
-  --color-warning-alpha-30: rgba(255, 23, 68, 0.3);
-  --border-success: rgba(100, 173, 59, 0.5);
-  --shadow-text: 
-    -1px -1px 0 rgba(0, 0, 0, 0.2),
-     1px -1px 0 rgba(0, 0, 0, 0.2),
-    -1px  1px 0 rgba(0, 0, 0, 0.2),
-     1px  1px 0 rgba(0, 0, 0, 0.2);
-  --transition-fast: 0.2s ease;
-  --transition-normal: 0.3s ease;
-  --border-radius-small: 4px;
-  --border-radius-medium: 8px;
-  --font-family: "Alumni Sans", sans-serif;
+  --panel-bg: rgba(0, 0, 0, 0.75);
+  --panel-border: rgba(100, 255, 100, 0.3);
+  --input-bg: rgba(0, 0, 0, 0.5);
+  --input-border: rgba(100, 255, 100, 0.2);
+  --font-family: 'Alumni Sans', system-ui, -apple-system, sans-serif;
+  --font-pixel: 'Press Start 2P', monospace;
 }
 
 /* Base styles */
@@ -204,26 +188,73 @@
 }
 
 /* Panel Layout */
-.panel-content {
+.panel-inner {
   display: flex;
   flex-direction: column;
-  transition: transform var(--transition-normal);
-  padding: 0.25rem;
+  gap: 0.75rem;
+  padding: 0.5rem;
   min-height: 165px;
-  max-height: 220px;
-  box-sizing: border-box;
-  position: relative;
 }
 
-/* Add scanline effect */
+.panel-header {
+  padding: 0.25rem;
+}
+
+.title-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel-title {
+  font-size: 2.5rem;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+  font-family: var(--font-family);
+  letter-spacing: 0.02em;
+}
+
+.input-section {
+  flex: 1;
+}
+
+.amount-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}
+
+.amount-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 2rem;
+  font-weight: 500;
+  font-family: var(--font-family);
+  padding: 0.25rem;
+}
+
+.amount-input:focus {
+  outline: none;
+}
+
+/* Scanline effect */
 .panel-content::after {
   content: '';
   position: absolute;
   inset: 0;
   background: repeating-linear-gradient(
     0deg,
-    rgba(255, 255, 255, 0.03) 0px,
-    rgba(255, 255, 255, 0.03) 1px,
+    rgba(100, 255, 100, 0.03) 0px,
+    rgba(100, 255, 100, 0.03) 1px,
     transparent 1px,
     transparent 2px
   );
@@ -236,18 +267,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 0.25rem;
+  padding: 0.25rem;
   gap: 1rem;
   min-height: 2.5rem;
 }
 
 .panel-title {
-  font-size: 2.25rem;
+  font-size: 2.5rem;
   font-weight: 600;
-  color: var(--color-white);
+  color: #00ff00;
+  text-shadow: 
+    0 0 5px rgba(0, 255, 0, 0.5),
+    0 0 10px rgba(0, 255, 0, 0.3);
   margin: 0;
-  text-shadow: var(--shadow-text);
-  letter-spacing: 0.02em;
+  font-family: var(--font-family);
+  letter-spacing: 0.05em;
 }
 
 /* Settings Button */
@@ -283,30 +317,28 @@
 }
 
 .token-button {
-  background: var(--color-black-alpha-25);
-  border: 1px solid var(--color-white-alpha-10);
-  border-radius: var(--border-radius-medium);
-  padding: 0.1rem 0.25rem;
-  color: var(--color-white);
+  background: var(--input-bg);
+  border: 2px solid var(--input-border);
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  color: #00ff00;
+  font-family: var(--font-family);
   font-size: 1.5rem;
   font-weight: 600;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  transition: all var(--transition-fast);
-  cursor: pointer;
-  min-width: 85px;
-  height: 42px;
-  box-sizing: border-box;
-  margin-right: 0;
-  border-top-right-radius: var(--border-radius-medium);
-  border-bottom-right-radius: var(--border-radius-medium);
+  transition: all 0.2s ease;
+  min-width: 100px;
+  text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
 }
 
 .token-button:hover:not(:disabled) {
-  background: var(--color-black-alpha-45);
-  border-color: rgba(100, 173, 59, 0.8);
-  transform: translateY(-1px);
+  background: rgba(0, 255, 0, 0.1);
+  border-color: rgba(100, 255, 100, 0.4);
+  box-shadow: 
+    0 0 10px rgba(0, 255, 0, 0.2),
+    inset 0 0 5px rgba(0, 255, 0, 0.2);
 }
 
 .token-button.warning {
@@ -335,25 +367,20 @@
 
 /* Max Button */
 .max-button {
-  background: var(--color-success-alpha-10);
-  border: 1px solid var(--color-success-alpha-30);
-  color: var(--color-success);
-  font-size: 0.85rem;
-  padding: 0.15rem 0.4rem;
-  border-radius: 3px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  font-weight: 600;
-  margin: 0 0.25rem;
-  height: fit-content;
-  align-self: center;
-  letter-spacing: 0.02em;
+  background: rgba(0, 255, 0, 0.1);
+  border: 2px solid rgba(0, 255, 0, 0.3);
+  color: #00ff00;
+  font-family: var(--font-pixel);
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+  text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
 }
 
-.max-button:hover {
-  background: var(--color-success-alpha-30);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+.max-button:hover:not(:disabled) {
+  background: rgba(0, 255, 0, 0.2);
+  box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
 }
 
 .max-button.disabled-max {
@@ -371,22 +398,13 @@
 .amount-container {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.35rem 0.35rem 0.35rem 0.5rem;
-  background: var(--color-black-alpha-25);
-  border: 1px solid var(--border-success);
-  border-radius: var(--border-radius-medium);
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  box-shadow: 
-    inset 0 1px 2px rgba(0, 0, 0, 0.2),
-    0 1px 0 #368D00,
-    0 1px 4px rgba(0, 0, 0, 0.15);
-  transition: all var(--transition-fast);
-  position: relative;
-  z-index: 1;
-  height: 100%;
-  box-sizing: border-box;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--input-bg);
+  border: 2px solid var(--input-border);
+  border-radius: 4px;
+  margin: 0.5rem 0;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
 }
 
 /* Input Styles */
@@ -395,14 +413,11 @@
   min-width: 0;
   background: transparent;
   border: none;
-  color: var(--color-white);
-  font-size: 1.75rem;
+  color: #00ff00;
+  font-size: 2rem;
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-shadow: var(--shadow-text);
-  padding: 0.1rem;
-  width: 100%;
-  transition: all var(--transition-fast);
+  font-family: var(--font-family);
+  text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
 }
 
 .amount-input:focus {
@@ -410,8 +425,7 @@
 }
 
 .amount-input::placeholder {
-  color: var(--color-white);
-  opacity: 1;
+  color: rgba(0, 255, 0, 0.3);
 }
 
 /* Token Button */
@@ -451,31 +465,32 @@
   border: 1px solid var(--border-success);
   border-top: none;
   border-radius: 0 0 var(--border-radius-medium) var(--border-radius-medium);
-  padding: 0.5rem;
+  padding: 0.75rem 0.5rem;
   color: var(--color-white);
+  font-family: var(--font-family);
+  font-size: 1.2rem;
 }
 
 .balance-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 1.1rem;
 }
 
 .balance-values {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
   align-items: center;
 }
 
 .balance-label {
-  color: #FFD700;
-  opacity: 0.8;
+  color: rgba(255, 255, 255, 0.7);
   font-weight: 500;
 }
 
 .token-amount {
   font-weight: 600;
+  font-size: 1.3rem;
 }
 
 .separator {
@@ -483,10 +498,8 @@
 }
 
 .fiat-amount {
-  color: #FFD700;
-  opacity: 0.8;
-  font-weight: 500;
-  transition: all 0.2s ease;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 1.2rem;
 }
 
 .network-fee {
@@ -591,6 +604,147 @@
   100% {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@media (max-width: 768px) {
+  .panel-content {
+    padding: 0.75rem;
+  }
+
+  .panel-title {
+    font-size: 2rem;
+  }
+
+  .amount-input {
+    font-size: 1.75rem;
+  }
+
+  .token-button {
+    font-size: 1.25rem;
+    padding: 0.4rem 0.8rem;
+  }
+}
+
+.amount-input.error {
+  color: #ff3d00;
+  text-shadow: 0 0 5px rgba(255, 61, 0, 0.5);
+}
+
+/* Mobile Optimizations */
+@media (max-width: 768px) {
+  .panel-content {
+    padding: 0.5rem;
+  }
+
+  .panel-inner {
+    gap: 0.5rem;
+    padding: 0.25rem;
+    min-height: 140px;
+  }
+
+  .panel-title {
+    font-size: 1.75rem;
+  }
+
+  .amount-container {
+    padding: 0.5rem;
+    gap: 0.25rem;
+  }
+
+  .amount-input {
+    font-size: 1.5rem;
+    padding: 0.15rem;
+  }
+
+  .token-button {
+    font-size: 1.1rem;
+    padding: 0.3rem 0.6rem;
+    min-width: 70px;
+    height: 36px;
+  }
+
+  .token-text {
+    font-size: 1.1rem;
+  }
+
+  .balance-display {
+    padding: 0.5rem 0.25rem;
+    font-size: 1rem;
+  }
+
+  .token-amount {
+    font-size: 1.1rem;
+  }
+
+  .fiat-amount {
+    font-size: 1rem;
+  }
+
+  .slippage-value {
+    font-size: 1.75rem;
+  }
+
+  /* Hide MAX button on mobile */
+  .hide-mobile {
+    display: none;
+  }
+
+  /* Adjust token logo size */
+  .token-logo :global(img) {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* Even smaller screens */
+@media (max-width: 400px) {
+  .panel-title {
+    font-size: 1.5rem;
+  }
+
+  .panel-inner {
+    gap: 0.25rem;
+    padding: 0.15rem;
+    min-height: 130px;
+  }
+
+  .amount-container {
+    padding: 0.35rem;
+    gap: 0.15rem;
+    margin: 0.25rem 0;
+  }
+
+  .amount-input {
+    font-size: 1.25rem;
+    padding: 0.1rem;
+  }
+
+  .token-button {
+    min-width: 60px;
+    font-size: 1rem;
+    padding: 0.25rem 0.5rem;
+    height: 32px;
+  }
+
+  .balance-values {
+    gap: 0.35rem;
+  }
+
+  .balance-display {
+    padding: 0.35rem 0.25rem;
+  }
+
+  .token-amount {
+    font-size: 1rem;
+  }
+
+  .fiat-amount {
+    font-size: 0.9rem;
+  }
+
+  .slippage-value {
+    font-size: 1.5rem;
   }
 }
 

@@ -1,235 +1,84 @@
 <script lang="ts">
-  import { tweened } from 'svelte/motion';
-  import { cubicOut } from 'svelte/easing';
-  import { tooltip } from '$lib/actions/tooltip';
-
-  export let variant: 'blue' | 'green' | 'yellow' = 'blue';
-  export let size: 'small' | 'medium' | 'big' = 'big';
-  export let state: 'default' | 'pressed' | 'selected' = 'default';
-  export let text: string = '';
-  export let onClick: () => void = () => {};
+  export let variant: "green" | "yellow" | "blue" = "green";
   export let disabled: boolean = false;
-  export let className: string = '';
-  export let width: number | string | 'auto' = 'auto';
-  export let tooltipText: string | null = null;
-
-  $: {
-    if (size === 'small' && variant === 'blue') {
-      size = 'medium';
-      console.warn('Small size is not available for blue buttons, falling back to medium');
-    }
-  }
-
-  const prefixMap = {
-    small: 'btnsmall',
-    medium: 'btn',
-    big: 'bigbtn'
-  };
-
-  const middlePartMap = {
-    small: 'mid',
-    medium: 'mid',
-    big: 'mid'
-  };
-
-  function getImagePath(part: string): string {
-    const prefix = prefixMap[size];
-    const middlePart = part === 'middle' ? middlePartMap[size] : part;
-    return `/pxcomponents/${prefix}-${variant}-${state}-${middlePart}.svg`;
-  }
-
-  function formatDimension(value: number | string): string {
-    if (value === 'auto') return 'auto';
-    if (typeof value === 'number') return `${value}px`;
-    return value;
-  }
-
-  let isPressed = false;
-  let isHovered = false;
-  
-  const brightness = tweened(1, {
-    duration: 100,
-    easing: cubicOut
-  });
-
-  const translateY = tweened(0, {
-    duration: 100,
-    easing: cubicOut
-  });
-
-  $: {
-    if (state === 'selected') {
-      brightness.set(0.9);
-    } else if (state === 'pressed') {
-      brightness.set(0.95);
-      translateY.set(2);
-    } else {
-      brightness.set(isHovered ? 1.05 : 1);
-      translateY.set(0);
-    }
-  }
-  
-  function handleMouseDown() {
-    if (!disabled) {
-      isPressed = true;
-      translateY.set(2);
-    }
-  }
-  
-  function handleMouseUp() {
-    if (!disabled) {
-      isPressed = false;
-      translateY.set(0);
-    }
-  }
-
-  function handleMouseEnter() {
-    if (!disabled) {
-      isHovered = true;
-    }
-  }
-
-  function handleMouseLeave() {
-    if (!disabled) {
-      isHovered = false;
-      handleMouseUp();
-    }
-  }
-
-  function handleClick(event: MouseEvent) {
-    if (disabled) {
-      event.preventDefault(); // Prevent default action if disabled
-      return;
-    }
-    onClick();
-  }
-
-  $: buttonClass = `pixel-button ${size} ${variant} ${state} ${disabled ? 'disabled' : ''} ${className}`;
-  $: formattedWidth = formatDimension(width);
+  export let type: "button" | "submit" | "reset" = "button";
+  export let className: string = "";
 </script>
 
-<a
-  use:tooltip={{ text: tooltipText !== null ? tooltipText : null }}
-  class={buttonClass}
-  on:click={handleClick}
-  on:mousedown={handleMouseDown}
-  on:mouseup={handleMouseUp}
-  on:mouseenter={handleMouseEnter}
-  on:mouseleave={handleMouseLeave}
-  data-sveltekit-preload-code="eager"
-  style="transform: translateY({$translateY}px); filter: brightness({$brightness}); width: {formattedWidth};"
-  aria-disabled={disabled}
+<button
+  {type}
+  {disabled}
+  class="button {variant} {className}"
+  on:click
 >
-  <div class="button-container" class:auto-size={width === 'auto'}>
-    <img src={getImagePath('l')} alt="" class="left-part" />
-    <div class="middle-part" style="background-image: url({getImagePath('mid')})"></div>
-    <img src={getImagePath('r')} alt="" class="right-part" />
-    <span class="button-text {state === 'selected' ? 'text-white' : ''}">
-      <slot>{text}</slot>
-    </span>
-  </div>
-</a>
+  <slot />
+</button>
 
-<style>
-  .pixel-button {
+<style lang="postcss">
+  .button {
     position: relative;
-    border: none;
-    background: none;
-    padding: 0;
+    padding: 8px 16px;
+    font-size: 14px;
+    border: 4px solid var(--jungle-light);
+    background: var(--jungle-dark);
+    color: var(--jungle-light);
     cursor: pointer;
-    image-rendering: pixelated;
-    transform-origin: center;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.1s ease-out, filter 0.1s ease-out;
-    min-width: fit-content;
-  }
-
-  .button-container {
-    display: flex;
-    align-items: stretch;
-    width: 100%;
-    position: relative;
-  }
-
-  .button-container.auto-size {
-    width: fit-content;
-  }
-
-  .left-part,
-  .right-part {
-    flex-shrink: 0;
-    height: 100%;
-    object-fit: contain;
-    pointer-events: none;
-  }
-
-  .middle-part {
-    flex: 1;
-    background-repeat: repeat-x;
-    background-position: center;
-    background-size: auto 100%;
-    pointer-events: none;
-    min-width: 20px; /* Minimum width to ensure button doesn't collapse */
-  }
-
-  .button-text {
-    font-family: theme('fontFamily.alumni');
-    font-size: 24px;
-    text-transform: uppercase;
-    padding: 0 16px;
-    user-select: none;
-    white-space: nowrap;
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
+    letter-spacing: 0.5px;
+    min-width: 100px;
     text-align: center;
-    width: auto;
-    min-width: max-content;
+    image-rendering: pixelated;
+    box-shadow: 4px 4px 0 #000;
+    transition: all 0.1s steps(1);
+    text-transform: uppercase;
+    font-family: 'Press Start 2P', monospace;
   }
 
-  .small {
-    height: 24px;
-    font-size: 8px;
+  .button:hover:not(:disabled) {
+    filter: brightness(120%);
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 #000;
   }
 
-  .medium {
-    height: 32px;
-    font-size: 10px;
+  .button:active:not(:disabled) {
+    transform: translate(4px, 4px);
+    box-shadow: 0 0 0 #000;
   }
 
-  .big {
-    height: 48px;
-    font-size: 12px;
-  }
-
-  .disabled {
-    cursor: not-allowed;
+  .button:disabled {
     opacity: 0.5;
-    pointer-events: none;
+    cursor: not-allowed;
+    filter: grayscale(100%);
   }
 
-  .blue {
-    color: #000;
-    font-weight: 600;
+  .button.yellow {
+    border-color: var(--moonlight);
+    background: #000;
+    color: var(--moonlight);
   }
 
-  .blue:hover {
-    color: #fff;
-    .button-text {
-      color: #fff;
+  .button.blue {
+    border-color: var(--path);
+    background: #000;
+    color: var(--path);
+  }
+
+  @media (max-width: 768px) {
+    .button {
+      padding: 6px 12px;
+      font-size: 12px;
+      min-width: 80px;
+      border-width: 3px;
+      box-shadow: 3px 3px 0 #000;
     }
-  }
 
-  .green .button-text {
-    color: #fff;
-    text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.5);
-  }
+    .button:hover:not(:disabled) {
+      transform: translate(-1px, -1px);
+      box-shadow: 4px 4px 0 #000;
+    }
 
-  .yellow .button-text {
-    color: #000;
-    text-shadow: 1px 1px 0px rgba(255, 255, 255, 0.5);
+    .button:active:not(:disabled) {
+      transform: translate(3px, 3px);
+      box-shadow: 0 0 0 #000;
+    }
   }
 </style>

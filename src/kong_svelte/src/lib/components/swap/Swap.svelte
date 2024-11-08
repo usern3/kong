@@ -14,9 +14,9 @@
   import TokenSelector from "$lib/components/swap/swap_ui/TokenSelectorModal.svelte";
   import SwapConfirmation from "$lib/components/swap/swap_ui/SwapConfirmation.svelte";
   import BigNumber from "bignumber.js";
-  import { flip } from 'svelte/animate';
-  import { quintOut } from 'svelte/easing';
-  import SwapSettings from './swap_ui/SwapSettings.svelte';
+  import { flip } from "svelte/animate";
+  import { quintOut } from "svelte/easing";
+  import SwapSettings from "./swap_ui/SwapSettings.svelte";
 
   const KONG_BACKEND_PRINCIPAL = getKongBackendPrincipal();
   const swapService = SwapService.getInstance();
@@ -62,8 +62,8 @@
 
   let isAnimating = false;
   let panels = [
-    { id: 'pay', type: 'pay', title: 'You Pay' },
-    { id: 'receive', type: 'receive', title: 'You Receive' }
+    { id: "pay", type: "pay", title: "You Pay" },
+    { id: "receive", type: "receive", title: "You Receive" },
   ];
 
   let routingPath: string[] = [];
@@ -72,7 +72,7 @@
 
   let showConfirmation = false;
 
-  let currentStep = '';
+  let currentStep = "";
   let currentRouteIndex = 0;
 
   let maxAllowedSlippage = slippage;
@@ -84,10 +84,11 @@
     }
   });
 
-  $: isValidInput = payAmount && 
-                    Number(payAmount) > 0 && 
-                    !isCalculating && 
-                    swapSlippage <= maxAllowedSlippage;
+  $: isValidInput =
+    payAmount &&
+    Number(payAmount) > 0 &&
+    !isCalculating &&
+    swapSlippage <= maxAllowedSlippage;
   $: buttonText = getButtonText(
     isCalculating,
     isValidInput,
@@ -129,7 +130,8 @@
     if (!$walletStore.isConnected) return "Connect Wallet";
     if (isCalculating) return "Calculating...";
     if (isProcessing) return "Processing...";
-    if (swapSlippage > maxAllowedSlippage) return `High Slippage: ${swapSlippage.toFixed(2)}%`;
+    if (swapSlippage > maxAllowedSlippage)
+      return `High Slippage: ${swapSlippage.toFixed(2)}%`;
     if (!isValidInput) return "Enter Amount";
     if (error) return error;
     return "Swap";
@@ -176,30 +178,31 @@
         );
 
         setReceiveAmount(receivedAmount);
-        setDisplayAmount(new BigNumber(receivedAmount).toFixed(receiveDecimals));
+        setDisplayAmount(
+          new BigNumber(receivedAmount).toFixed(receiveDecimals),
+        );
 
         const quotePrice = new BigNumber(quote.Ok.price || 0);
         price = quotePrice.toString();
-        
-        payUsdValue = new BigNumber(amount)
-          .times(quotePrice)
-          .toFixed(2);
-        
-        usdValue = new BigNumber(receivedAmount)
-          .times(quotePrice)
-          .toFixed(2);
+
+        payUsdValue = new BigNumber(amount).times(quotePrice).toFixed(2);
+
+        usdValue = new BigNumber(receivedAmount).times(quotePrice).toFixed(2);
 
         swapSlippage = quote.Ok.slippage;
-        
+
         isSlippageExceeded = swapSlippage > maxAllowedSlippage;
-        
+
         if (quote.Ok.txs.length > 0) {
-          routingPath = [payToken, ...quote.Ok.txs.map(tx => tx.receive_symbol)];
-          
+          routingPath = [
+            payToken,
+            ...quote.Ok.txs.map((tx) => tx.receive_symbol),
+          ];
+
           gasFees = [];
           lpFees = [];
-          
-          quote.Ok.txs.forEach(tx => {
+
+          quote.Ok.txs.forEach((tx) => {
             const receiveDecimals = getTokenDecimals(tx.receive_symbol);
             gasFees.push(swapService.fromBigInt(tx.gas_fee, receiveDecimals));
             lpFees.push(swapService.fromBigInt(tx.lp_fee, receiveDecimals));
@@ -224,7 +227,7 @@
       usdValue = "0";
     } finally {
       isCalculating = false;
-    } 
+    }
   }
 
   const debouncedGetQuote = debounce(getSwapQuote, 500);
@@ -241,24 +244,21 @@
 
   async function handleTokenSwitch() {
     if (isAnimating) return;
-    
+
     isAnimating = true;
-    
-    panels = panels.map((panel, i) => ({
-        ...panel,
-        direction: i === 0 ? 'topLeft' : 'bottomRight'
-    })).reverse();
-    
+
+    const oldPayAmount = payAmount;
+    const oldReceiveAmount = receiveAmount;
+
     [payToken, receiveToken] = [receiveToken, payToken];
-    payAmount = "";
-    setReceiveAmount("0");
-    payUsdValue = "0";
-    usdValue = "0";
-    
+    payAmount = oldReceiveAmount;
+    setReceiveAmount(oldPayAmount);
+
+    [payUsdValue, usdValue] = [usdValue, payUsdValue];
+
     setTimeout(() => {
-        isAnimating = false;
-        panels = panels.reverse();
-    }, 200);
+      isAnimating = false;
+    }, 500);
   }
 
   function handleInputChange(event: Event | CustomEvent) {
@@ -299,28 +299,28 @@
 
   function startPolling(reqId: bigint) {
     let hasCompleted = false;
-    
+
     intervalId = setInterval(async () => {
       try {
         const status = await swapService.requests([reqId]);
-        
+
         if (status.Ok?.[0]?.reply && !hasCompleted) {
           const reply = status.Ok[0].reply;
-          
-          if ('Swap' in reply) {
+
+          if ("Swap" in reply) {
             const swapStatus = reply.Swap;
-            
+
             if (showConfirmation) {
-              const txIndex = swapStatus.txs?.findIndex(tx => !tx.completed);
+              const txIndex = swapStatus.txs?.findIndex((tx) => !tx.completed);
               if (txIndex !== -1 && txIndex !== undefined) {
                 const currentTx = swapStatus.txs[txIndex];
                 currentStep = `Swapping ${currentTx.pay_symbol} → ${currentTx.receive_symbol}`;
                 currentRouteIndex = txIndex;
               } else {
-                currentStep = 'Processing...';
+                currentStep = "Processing...";
               }
             }
-            
+
             if (!hasCompleted) {
               if (swapStatus.status === "Success") {
                 hasCompleted = true;
@@ -337,7 +337,7 @@
       } catch (err) {
         if (!hasCompleted) {
           hasCompleted = true;
-          console.error('Polling error:', err);
+          console.error("Polling error:", err);
           clearInterval(intervalId);
           handleSwapFailure(null);
         }
@@ -370,7 +370,7 @@
         throw new Error("Failed to execute swap - no requestId returned");
       }
     } catch (err) {
-      console.error('Swap execution error:', err);
+      console.error("Swap execution error:", err);
       toastStore.error(err instanceof Error ? err.message : "Swap failed");
       isProcessing = false;
       isConfirmationOpen = false;
@@ -381,10 +381,13 @@
   function handleSwapSuccess(reply: any) {
     isProcessing = false;
     showConfirmation = false; // Instant close
-    
+
     if (reply.receive_amount) {
       const receiveDecimals = getTokenDecimals(receiveToken);
-      const finalAmount = swapService.fromBigInt(reply.receive_amount, receiveDecimals);
+      const finalAmount = swapService.fromBigInt(
+        reply.receive_amount,
+        receiveDecimals,
+      );
       setReceiveAmount(finalAmount);
       setDisplayAmount(new BigNumber(finalAmount).toFixed(receiveDecimals));
     }
@@ -414,7 +417,7 @@
     tokenFee = undefined;
     requestId = null;
     transactionStateObject = null;
-    currentStep = '';
+    currentStep = "";
     currentRouteIndex = 0;
   }
 
@@ -432,10 +435,10 @@
   <div class="swap-container" in:fade={{ duration: 420 }}>
     <div class="panels-container">
       {#each panels as panel (panel.id)}
-        <div 
+        <div
           animate:flip={{
             duration: 169,
-            easing: quintOut
+            easing: quintOut,
           }}
           class="panel-wrapper"
         >
@@ -443,30 +446,49 @@
             <SwapPanel
               title={panel.title}
               {...panelData[panel.type]}
-              onSettingsClick={() => showSettings = true}
+              onSettingsClick={() => (showSettings = true)}
             />
           </div>
         </div>
       {/each}
 
-      <button 
-        class="switch-button {isAnimating ? 'rotating' : ''}"
+      <button
+        class="switch-button {isAnimating ? 'swirling' : ''}"
         on:click={handleTokenSwitch}
-        disabled={isProcessing || isAnimating} 
+        disabled={isProcessing || isAnimating}
       >
-        <img src="/pxcomponents/arrow.svg" alt="swap" class="swap-arrow" />
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="swap-icon"
+        >
+          <path d="M16 3h5v5" />
+          <path d="M4 20L21 3" />
+          <path d="M21 16v5h-5" />
+          <path d="M3 4l3 3" />
+          <path d="M20 21l-3-3" />
+        </svg>
       </button>
     </div>
 
     <div class="swap-footer mt-3">
-      <Button
-        variant={swapSlippage > maxAllowedSlippage ? "blue" : "yellow"}
-        disabled={!isValidInput || isProcessing || isAnimating || !$walletStore.isConnected}
-        onClick={handleSwapClick}
-        width="100%"
+      <button
+        class="swap-button {swapSlippage > maxAllowedSlippage ? 'error' : ''}"
+        disabled={!isValidInput ||
+          isProcessing ||
+          isAnimating ||
+          !$walletStore.isConnected}
+        on:click={handleSwapClick}
       >
         {buttonText}
-      </Button>
+      </button>
     </div>
   </div>
 </div>
@@ -529,8 +551,8 @@
   <div class="modal-overlay" transition:fade={{ duration: 200 }}>
     <SwapSettings
       show={showSettings}
-      onClose={() => showSettings = false}
-      slippage={slippage}
+      onClose={() => (showSettings = false)}
+      {slippage}
       onSlippageChange={(value) => {
         slippage = value;
         maxAllowedSlippage = value;
@@ -545,7 +567,9 @@
 <style lang="postcss">
   .swap-wrapper {
     width: 100%;
+    max-width: 480px;
     margin: 0 auto;
+    font-family: "Alibaba Sans", "Alimini Sans", system-ui, sans-serif;
   }
 
   .swap-container {
@@ -573,25 +597,23 @@
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    width: 48px;
-    height: 48px;
-    background: linear-gradient(45deg, #ffcd1f, #ffe077);
-    border: 3px solid #368d00;
-    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    background: var(--sidebar-border-dark);
+    border: 1px solid var(--sidebar-border);
+    border-radius: 6px;
     cursor: pointer;
     z-index: 1;
     padding: 8px;
     transition: all 0.2s ease;
-    box-shadow: 
-      0 4px 12px rgba(0, 0, 0, 0.15),
-      inset 0 2px 4px rgba(255, 255, 255, 0.3);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    color: white;
   }
 
   .switch-button:hover:not(:disabled) {
-    transform: translate(-50%, -50%) scale(1.1);
-    box-shadow: 
-      0 6px 16px rgba(0, 0, 0, 0.2),
-      inset 0 2px 4px rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%) translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    filter: brightness(1.1);
   }
 
   .switch-button:disabled {
@@ -599,9 +621,69 @@
     cursor: not-allowed;
   }
 
-  .swap-arrow {
+  .swap-icon {
     width: 100%;
     height: 100%;
+    transition: transform 0.5s ease;
+  }
+  .swap-button {
+    position: relative;
+    padding: 8px 16px;
+    background: #1b5e20;
+    color: #ffffff;
+    border: 3px solid #4caf50;
+    font-family: "Press Start 2P", monospace;
+    font-size: 14px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.1s steps(2);
+    box-shadow:
+      4px 4px 0 #000,
+      3px 3px 0 #4caf50;
+    image-rendering: pixelated;
+    width: 100%;
+  }
+
+  .swap-button:hover:not(:disabled) {
+    background: #4caf50;
+    transform: translate(-2px, -2px);
+    box-shadow:
+      6px 6px 0 #1b5e20,
+      5px 5px 0 #4caf50;
+  }
+
+  .swap-button:active:not(:disabled) {
+    transform: translate(4px, 4px);
+    box-shadow: none;
+  }
+
+  .swap-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .swap-button.error {
+    background: #b71c1c;
+    border-color: #f44336;
+  }
+
+  .swap-button.error:hover:not(:disabled) {
+    background: #f44336;
+    box-shadow:
+      6px 6px 0 #b71c1c,
+      5px 5px 0 #f44336;
+  }
+  .swirling .swap-icon {
+    animation: swirl 0.5s ease-in-out;
+  }
+
+  @keyframes swirl {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
   }
 
   .modal-overlay {
@@ -693,30 +775,5 @@
   .panel-content {
     transform-origin: center center;
     backface-visibility: hidden;
-  }
-
-  .rotating {
-    animation: rotate 0.2s ease-in-out;
-  }
-
-  @keyframes rotate {
-    from {
-      transform: translate(-50%, -50%) rotate(0deg);
-    }
-    to {
-      transform: translate(-50%, -50%) rotate(180deg);
-    }
-  }
-
-  .slippage-warning {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: rgba(255, 23, 68, 0.1);
-    border: 1px solid #FF1744;
-    border-radius: 8px;
-    color: #FF1744;
-    font-family: 'Aeonik Mono', monospace;
-    font-size: 0.75rem;
-    text-align: center;
   }
 </style>
