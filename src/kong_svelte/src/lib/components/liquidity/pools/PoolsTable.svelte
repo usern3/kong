@@ -16,89 +16,53 @@
   let searchTerm = "";
   let showAddLiquidityModal = false;
   let selectedTokens = { token0: '', token1: '' };
-  let pageSize = 10;
-  let currentPage = 1;
-
-  const activeSorts = writable<Record<string, "asc" | "desc" | null>>({
-    price: null,
-    rolling_24h_volume: null,
-    rolling_24h_apy: null,
-    tvl: null
-  });
-
-  const headers = [
-    { label: "Pair", column: "symbol", textClass: "text-left", sortable: false },
-    { label: "Price", column: "price", textClass: "text-right", sortable: true },
-    { label: "TVL", column: "tvl", textClass: "text-right", sortable: true },
-    { label: "24h Volume", column: "rolling_24h_volume", textClass: "text-right", sortable: true },
-    { label: "APY", column: "rolling_24h_apy", textClass: "text-right", sortable: true },
-    { label: "Actions", column: "actions", textClass: "text-center", sortable: false }
-  ];
-
-  $: filteredPools = pools.filter(pool => {
-    const searchLower = searchTerm.toLowerCase();
-    return !searchTerm || 
-      pool.symbol_0.toLowerCase().includes(searchLower) || 
-      pool.symbol_1.toLowerCase().includes(searchLower) ||
-      (pool.symbol_0 + '/' + pool.symbol_1).toLowerCase().includes(searchLower);
-  });
-
-  $: paginatedPools = filteredPools.slice(
-    (currentPage - 1) * pageSize, 
-    currentPage * pageSize
-  );
-
-  $: totalPages = Math.ceil(filteredPools.length / pageSize);
-
-  function nextPage() {
-    if (currentPage < totalPages) currentPage++;
-  }
-
-  function prevPage() {
-    if (currentPage > 1) currentPage--;
-  }
-
-  function handleSort(column: string) {
-    $activeSorts = Object.fromEntries(
-      Object.entries($activeSorts).map(([key, value]) => {
-        if (key === column) {
-          if (value === null) return [key, "desc"];
-          if (value === "desc") return [key, "asc"];
-          return [key, null];
-        }
-        return [key, value];
-      })
-    );
-
-    let sortedPools = [...pools];
-    const activeColumns = Object.entries($activeSorts)
-      .filter(([_, dir]) => dir !== null)
-      .map(([col, dir]) => ({ column: col, direction: dir }));
-
-    sortedPools.sort((a: any, b: any) => {
-      for (const sort of activeColumns) {
-        const aVal = sort.column === 'price' ? 
-          tokenMap.get(a.address_0)?.price ?? 0 : 
-          a[sort.column];
-        const bVal = sort.column === 'price' ? 
-          tokenMap.get(b.address_0)?.price ?? 0 : 
-          b[sort.column];
-
-        if (aVal === bVal) continue;
-
-        const modifier = sort.direction === 'asc' ? 1 : -1;
-        return aVal > bVal ? modifier : -modifier;
-      }
-      return 0;
-    });
-
-    pools = sortedPools;
-  }
 
   function handleAddLiquidity(token0: string, token1: string) {
     selectedTokens = { token0, token1 };
     showAddLiquidityModal = true;
   }
+
+  $: filteredPools = pools.filter(pool => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    return pool.symbol_0.toLowerCase().includes(searchLower) || 
+           pool.symbol_1.toLowerCase().includes(searchLower) ||
+           (pool.symbol_0 + '/' + pool.symbol_1).toLowerCase().includes(searchLower);
+  });
+
+  function toggleSort(column: string) {
+    if (sortColumn === column) {
+      sortDirection = sortDirection === "asc" ? "desc" : "asc";
+    } else {
+      sortColumn = column;
+      sortDirection = "asc";
+    }
+  }
+
+  function getSortIcon(column: string) {
+    if (sortColumn !== column) return ArrowUpDown;
+    return sortDirection === "asc" ? ArrowUp : ArrowDown;
+  }
+
+  $: sortedAndFilteredPools = filteredPools.sort((a, b) => {
+    if (!sortColumn) return 0;
+    
+    const direction = sortDirection === "asc" ? 1 : -1;
+    switch (sortColumn) {
+      case "pool":
+        return (a.symbol_0 + a.symbol_1).localeCompare(b.symbol_0 + b.symbol_1) * direction;
+      case "price":
+        return (Number(a.price) - Number(b.price)) * direction;
+      case "tvl":
+        return (Number(a.tvl) - Number(b.tvl)) * direction;
+      case "volume":
+        return (Number(a.volume_24h) - Number(b.volume_24h)) * direction;
+      case "apy":
+        return (Number(a.apy) - Number(b.apy)) * direction;
+      default:
+        return 0;
+    }
+  });
 </script>
 
 <div class="table-container">
@@ -109,22 +73,11 @@
         <TextInput
           id="pool-search"
           placeholder="Search by token symbol or pair..."
-          value={searchTerm}
-          on:input={(e) => searchTerm = e.target.value}
+          bind:value={searchTerm}
           size="sm"
           variant="success"
         />
       </div>
-    </div>
-
-    <div class="page-size">
-      <span>Rows per page:</span>
-      <select bind:value={pageSize}>
-        <option value={10}>10</option>
-        <option value={25}>25</option>
-        <option value={50}>50</option>
-        <option value={100}>100</option>
-      </select>
     </div>
   </div>
 
@@ -135,182 +88,165 @@
   {:else if error}
     <div class="error">{error}</div>
   {:else}
-    <table>
-      <thead>
-        <tr>
-          {#each headers as header}
-            <th class={header.textClass}>
-              <div class="header-content" style="justify-content: {header.textClass === 'text-right' ? 'flex-end' : 'flex-start'}">
-                <span>{header.label}</span>
-                {#if header.sortable}
-                  <button class="sort-btn" on:click={() => handleSort(header.column)}>
-                    {#if $activeSorts[header.column] === 'asc'}
-                      <ArrowUp class="sort-icon active" />
-                    {:else if $activeSorts[header.column] === 'desc'}
-                      <ArrowDown class="sort-icon active" />
-                    {:else}
-                      <ArrowUpDown class="sort-icon" />
-                    {/if}
-                  </button>
-                {/if}
-              </div>
+    <!-- Desktop view -->
+    <div class="table-scroll-container">
+      <table class="w-full hidden md:table">
+        <thead>
+          <tr>
+            <th class="text-left p-4">
+              <button class="flex items-center gap-2" on:click={() => toggleSort("pool")}>
+                <span>Pool</span>
+                <svelte:component this={getSortIcon("pool")} size={16} />
+              </button>
             </th>
+            <th class="text-right p-4">
+              <button class="flex items-center gap-2 ml-auto" on:click={() => toggleSort("price")}>
+                <span>Price</span>
+                <svelte:component this={getSortIcon("price")} size={16} />
+              </button>
+            </th>
+            <th class="text-right p-4">
+              <button class="flex items-center gap-2 ml-auto" on:click={() => toggleSort("tvl")}>
+                <span>TVL</span>
+                <svelte:component this={getSortIcon("tvl")} size={16} />
+              </button>
+            </th>
+            <th class="text-right p-4">
+              <button class="flex items-center gap-2 ml-auto" on:click={() => toggleSort("volume")}>
+                <span>Volume (24h)</span>
+                <svelte:component this={getSortIcon("volume")} size={16} />
+              </button>
+            </th>
+            <th class="text-right p-4">
+              <button class="flex items-center gap-2 ml-auto" on:click={() => toggleSort("apy")}>
+                <span>APY</span>
+                <svelte:component this={getSortIcon("apy")} size={16} />
+              </button>
+            </th>
+            <th class="text-center p-4">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each sortedAndFilteredPools as pool, i}
+            <PoolRow 
+              {pool} 
+              {tokenMap} 
+              isEven={i % 2 === 0} 
+              onAddLiquidity={handleAddLiquidity} 
+            />
           {/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each paginatedPools as pool, i (pool.address_0 + pool.address_1)}
-          <PoolRow 
-            {pool} 
-            {tokenMap}
-            isEven={i % 2 === 0}
-            onAddLiquidity={handleAddLiquidity}
-          />
-        {/each}
-      </tbody>
-    </table>
-  {/if}
+        </tbody>
+      </table>
+    </div>
 
-  <div class="pagination">
-    <button class="page-btn" disabled={currentPage === 1} on:click={prevPage}>
-      Previous
-    </button>
-    
-    <span>Page {currentPage} of {totalPages}</span>
-    
-    <button class="page-btn" disabled={currentPage === totalPages} on:click={nextPage}>
-      Next
-    </button>
-  </div>
+    <!-- Mobile view -->
+    <div class="mobile-scroll-container">
+      {#each sortedAndFilteredPools as pool, i}
+        <PoolRow 
+          {pool} 
+          {tokenMap} 
+          isEven={i % 2 === 0} 
+          onAddLiquidity={handleAddLiquidity}
+        />
+      {/each}
+    </div>
+  {/if}
 </div>
 
 {#if showAddLiquidityModal}
   <AddLiquidityModal
-    show={true}
-    token0Id={selectedTokens.token0}
-    token1Id={selectedTokens.token1}
+    showModal={showAddLiquidityModal}
     onClose={() => showAddLiquidityModal = false}
+    token0={tokenMap.get(selectedTokens.token0)}
+    token1={tokenMap.get(selectedTokens.token1)}
   />
 {/if}
 
-<style>
+<style lang="postcss">
   .table-container {
-    width: 100%;
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 1rem;
+    @apply w-full max-w-[1400px] mx-auto flex flex-col h-full md:max-h-[calc(100vh-16rem)];
   }
 
   .controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-    gap: 1rem;
+    @apply flex justify-between items-center mb-4 gap-4 flex-shrink-0;
+  }
+
+  .table-scroll-container {
+    @apply hidden md:block overflow-auto flex-grow;
+    height: calc(100vh - 16rem);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+  }
+
+  .table-scroll-container::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  .table-scroll-container::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .table-scroll-container::-webkit-scrollbar-thumb {
+    @apply bg-white/30 rounded-full;
+  }
+
+  .table-scroll-container::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/40;
+  }
+
+  .mobile-scroll-container {
+    @apply md:hidden overflow-auto flex-grow;
+    height: calc(100vh - 16rem);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+  }
+
+  .mobile-scroll-container::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  .mobile-scroll-container::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .mobile-scroll-container::-webkit-scrollbar-thumb {
+    @apply bg-white/30 rounded-full;
+  }
+
+  .mobile-scroll-container::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/40;
   }
 
   .search-container {
-    flex: 1;
-    max-width: 400px;
+    @apply flex-1 max-w-[400px];
   }
 
   .search-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    padding: 0 0.75rem;
-  }
-
-  .search-icon {
-    color: #6ebd40;
-    margin-right: 0.5rem;
+    @apply relative flex items-center bg-white/10 rounded-lg px-3;
   }
 
   :global(.search-wrapper input) {
-    background: transparent !important;
-    border: none !important;
-    padding: 0.75rem 0 !important;
-    width: 100%;
-    color: white;
+    @apply bg-transparent border-none py-3 px-0 w-full text-white;
   }
 
   :global(.search-wrapper input::placeholder) {
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .page-size {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    color: #fff;
-  }
-
-  .page-size select {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    color: #fff;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
+    @apply text-white/60;
   }
 
   table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    overflow: hidden;
+    @apply w-full border-collapse border-spacing-0 bg-white/5 rounded-lg overflow-hidden;
   }
 
   th {
-    padding: 1rem 1.5rem;
-    color: #fff;
-    font-weight: 600;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .header-content {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .sort-btn {
-    background: none;
-    border: none;
-    padding: 0.25rem;
-    color: #fff;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-    cursor: pointer;
-  }
-
-  .sort-btn:hover {
-    opacity: 1;
-  }
-
-  .sort-icon.active {
-    opacity: 1;
-    color: #6ebd40;
+    @apply text-sm font-medium text-white/60 p-4 border-b border-white/10 bg-white/5;
   }
 
   .loading {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 200px;
+    @apply flex justify-center items-center h-[200px];
   }
 
   .spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid rgba(255, 255, 255, 0.1);
-    border-left-color: #6ebd40;
-    border-radius: 50%;
+    @apply w-10 h-10 border-4 border-white/10 border-l-emerald-500 rounded-full;
     animation: spin 1s linear infinite;
   }
 
@@ -319,37 +255,10 @@
   }
 
   .error {
-    color: #ef4444;
-    text-align: center;
-    padding: 1rem;
+    @apply text-red-500 text-center p-4;
   }
 
-  .pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 1.5rem;
-    margin-top: 1.5rem;
-    color: #fff;
-  }
-
-  .page-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    padding: 0.5rem 1.25rem;
-    border-radius: 6px;
-    color: #fff;
-    transition: background-color 0.2s;
-    font-size: 0.875rem;
-    cursor: pointer;
-  }
-
-  .page-btn:not(:disabled):hover {
-    background: rgba(255, 255, 255, 0.2);
-  }
-
-  .page-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  th button {
+    @apply text-sm font-medium text-white/60 hover:text-white transition-colors duration-200;
   }
 </style>
