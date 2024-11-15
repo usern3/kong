@@ -9,6 +9,7 @@
   import Modal from "$lib/components/common/Modal.svelte";
   import PoolDetails from "$lib/components/liquidity/pools/PoolDetails.svelte";
   import { Flame } from "lucide-svelte";
+  import AddLiquidityModal from "$lib/components/liquidity/add_liquidity/AddLiquidityModal.svelte";
 
   export let pool: BE.Pool & { is_hot?: boolean; tvl?: number };
   export let tokenMap: Map<string, any>;
@@ -16,15 +17,28 @@
   export let onAddLiquidity: (token0: string, token1: string) => void;
 
   let showPoolDetails = false;
+  let showAddLiquidity = false;
 
   function handleAddLiquidity() {
-    onAddLiquidity(pool.address_0, pool.address_1);
+    showAddLiquidity = true;
+  }
+
+  function handleAddLiquidityClose() {
+    showAddLiquidity = false;
   }
 
   function handleSwap() {
     if (pool.address_0 && pool.address_1) {
       goto(`/swap?from=${pool.address_0}&to=${pool.address_1}`);
     }
+  }
+
+  function handleClose() {
+    showPoolDetails = false;
+  }
+
+  function handleViewDetails() {
+    showPoolDetails = true;
   }
 
   $: apyColor =
@@ -35,10 +49,7 @@
         : "#FF8C00";
 </script>
 
-<tr 
-  class="pool-row {isEven ? 'even' : ''}"
-  on:click={() => showPoolDetails = true}
->
+<tr class="pool-row {isEven ? 'even' : ''}">
   <td>
     <div class="token-info">
       <TokenImages
@@ -80,19 +91,43 @@
         text="Add LP"
         onClick={handleAddLiquidity}
       />
-      <Button variant="green" size="small" text="Swap" onClick={handleSwap} />
+      <Button 
+        variant="green" 
+        size="small" 
+        text="Swap" 
+        onClick={handleSwap}
+      />
+      <Button 
+        variant="green"
+        size="small" 
+        text="Details" 
+        onClick={handleViewDetails}
+      />
     </div>
   </td>
 </tr>
 
+{#if showAddLiquidity}
+  <AddLiquidityModal
+    showModal={showAddLiquidity}
+    onClose={handleAddLiquidityClose}
+    token0={tokenMap.get(pool.address_0)}
+    token1={tokenMap.get(pool.address_1)}
+  />
+{/if}
+
 {#if showPoolDetails}
-    <PoolDetails {pool} {tokenMap} />
+  <PoolDetails 
+    showModal={showPoolDetails} 
+    onClose={handleClose}
+    {pool}
+    {tokenMap}
+  />
 {/if}
 
 <style>
   .pool-row {
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    cursor: pointer;
   }
 
   .pool-row:hover {

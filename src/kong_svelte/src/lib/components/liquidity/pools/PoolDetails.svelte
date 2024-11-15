@@ -11,6 +11,7 @@
     export let tokenMap: Map<string, any>;
     export let onClose: () => void;
     export let positions: Position[] = [];
+    export let showModal: boolean;
   
     let activeTab: 'details' | 'add-liquidity' | 'positions' = 'details';
     
@@ -30,12 +31,17 @@
     $: token1 = tokenMap.get(pool.address_1);
     $: apyColor = pool.rolling_24h_apy > 100 ? "#FFD700" : 
                   pool.rolling_24h_apy > 50 ? "#FFA500" : "#FF8C00";
+  
+    function handleClose() {
+        showModal = false;
+        onClose();
+    }
   </script>
   
   <Modal
-    show={true}
+    show={showModal}
     title="Pool Details"
-    {onClose}
+    onClose={handleClose}
     variant="green"
     width="800px"
   >

@@ -359,12 +359,20 @@
       const currentStep = statusSteps.find(step => !step.completed);
       return currentStep ? currentStep.label : 'Success';
     }
+  
+    export let showModal = false;
+    export let onClose: () => void;
+  
+    function handleClose() {
+        showModal = false;
+        onClose?.();
+    }
   </script>
   
   <Modal
-    show={true}
+    show={showModal}
     title="Add Liquidity"
-    onClose={() => goto('/pools')}
+    onClose={handleClose}
     variant="green"
     width="800px"
   >
