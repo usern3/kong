@@ -17,6 +17,9 @@
   let showAddLiquidityModal = false;
   let selectedTokens = { token0: '', token1: '' };
 
+  // Add tab state
+  let activeTab = writable("all_pools");
+
   function handleAddLiquidity(token0: string, token1: string) {
     selectedTokens = { token0, token1 };
     showAddLiquidityModal = true;
@@ -66,17 +69,59 @@
 </script>
 
 <div class="table-container">
-  <div class="controls">
-    <div class="search-container">
-      <div class="search-wrapper">
-        <Search class="search-icon mr-1" size={18} />
-        <TextInput
-          id="pool-search"
-          placeholder="Search by token symbol or pair..."
-          bind:value={searchTerm}
-          size="sm"
-          variant="success"
-        />
+  <div class="controls-wrapper">
+    <div class="controls">
+      <!-- Tab buttons - mobile view -->
+      <div class="tab-buttons md:hidden w-full mb-4">
+        <div class="flex gap-2">
+          <button 
+            class="flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors duration-200"
+            class:active={$activeTab === 'all_pools'}
+            on:click={() => activeTab.set('all_pools')}
+          >
+            All Pools
+          </button>
+          <button
+            class="flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors duration-200"
+            class:active={$activeTab === 'your_pools'}
+            on:click={() => activeTab.set('your_pools')}
+          >
+            Your Pools
+          </button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4 w-full">
+        <div class="search-container">
+          <div class="search-wrapper">
+            <Search class="search-icon mr-1" size={18} />
+            <TextInput
+              id="pool-search"
+              placeholder="Search by token symbol or pair..."
+              bind:value={searchTerm}
+              size="sm"
+              variant="success"
+            />
+          </div>
+        </div>
+
+        <!-- Tab buttons - desktop view -->
+        <div class="hidden md:flex gap-2">
+          <button 
+            class="py-2 px-4 rounded-lg text-sm font-medium transition-colors duration-200"
+            class:active={$activeTab === 'all_pools'}
+            on:click={() => activeTab.set('all_pools')}
+          >
+            All Pools
+          </button>
+          <button
+            class="py-2 px-4 rounded-lg text-sm font-medium transition-colors duration-200"
+            class:active={$activeTab === 'your_pools'}
+            on:click={() => activeTab.set('your_pools')}
+          >
+            Your Pools
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -167,8 +212,12 @@
     @apply w-full max-w-[1400px] mx-auto flex flex-col h-full md:max-h-[calc(100vh-16rem)];
   }
 
+  .controls-wrapper {
+    @apply w-full;
+  }
+
   .controls {
-    @apply flex justify-between items-center mb-4 gap-4 flex-shrink-0;
+    @apply flex flex-col md:flex-row justify-between items-center mb-4 gap-4 flex-shrink-0;
   }
 
   .table-scroll-container {
@@ -218,7 +267,7 @@
   }
 
   .search-container {
-    @apply flex-1 max-w-[400px];
+    @apply flex-1 max-w-full md:max-w-[400px];
   }
 
   .search-wrapper {
@@ -231,6 +280,14 @@
 
   :global(.search-wrapper input::placeholder) {
     @apply text-white/60;
+  }
+
+  button.active {
+    @apply bg-emerald-500 text-white;
+  }
+
+  button:not(.active) {
+    @apply bg-white/10 text-white/60 hover:bg-white/20;
   }
 
   table {
