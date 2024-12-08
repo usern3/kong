@@ -100,11 +100,10 @@ export function formatPoolData(pools: BE.Pool[]): BE.Pool[] {
   const store = get(tokenStore);
 
   return pools.map((pool, index) => {
-    const token = store.tokens.find(t => t.canister_id === pool.address_1);
-    const decimals1 = token?.decimals || 6;
+    const decimals1 = 6;
     const balance = pool.balance || 0;
     const apy = formatToNonZeroDecimal(pool.rolling_24h_apy);
-    const tvl = new BigNumber(balance.toString()).div(10 ** decimals1).toFixed(0);
+    const tvl = new BigNumber(balance.toString()).div(10 ** decimals1);
 
     return {
       ...pool,

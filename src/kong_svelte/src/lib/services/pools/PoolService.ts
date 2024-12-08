@@ -5,6 +5,8 @@ import { PoolResponseSchema, UserPoolBalanceSchema } from './poolSchema';
 import { IcrcService } from '../icrc/IcrcService';
 import { canisterId as kongBackendCanisterId } from '../../../../../declarations/kong_backend';
 import { canisterIDLs } from '../pnp/PnpInitializer';
+import { PoolSerializer } from './PoolSerializer';
+import { createAnonymousActorHelper } from '$lib/utils/actorUtils';
 
 export class PoolService {
   protected static instance: PoolService;
@@ -19,47 +21,44 @@ export class PoolService {
   // Data Fetching
   public static async fetchPoolsData(): Promise<BE.PoolResponse> {
     try {
-      const pnp = get(auth);
-      const actor =  await auth.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, {anon: true});
-      if (!actor) {
-        return {
-          pools: [],
-          total_tvl: 0n,
-          total_24h_volume: 0n,
-          total_24h_lp_fee: 0n
-        };
-      }
+      const actor = await createAnonymousActorHelper(kongBackendCanisterId, canisterIDLs.kong_backend);
       const result = await actor.pools([]);
-
-      if (!result || !result.Ok) {
-        console.error('Unexpected response structure:', result);
-        throw new Error('Invalid response from actor');
+      if (!result.Ok) {
+        throw new Error('Failed to fetch pools');
       }
 
-      // Ensure all required properties are present
-      const validatedData = PoolResponseSchema.parse(result.Ok);
 
-      // Provide default value for lp_token_symbol if missing
-      validatedData.pools = validatedData.pools.map(pool => ({
-        ...pool,
-        lp_token_symbol: pool.lp_token_symbol
-      }));
-
-      return validatedData as BE.PoolResponse;
+      const serializedPools = PoolSerializer.serializePoolsResponse(result.Ok);
+      return serializedPools;
     } catch (error) {
       console.error('Error fetching pools:', error);
-      throw new Error('Failed to fetch pools data');
+      throw error;
     }
   }
 
   // Pool Operations
-  public static async getPoolDetails(poolId: string): Promise<BE.Pool> {
+  public static async getPoolDetails(poolId: string | number): Promise<BE.Pool> {
     try {
-      const actor =  await auth.getActor(kongBackendCanisterId, 'kong_backend', {anon: true});
-      return await actor.get_by_pool_id(poolId);
+      console.log('[PoolService] Getting pool details for ID:', poolId);
+      const actor = await auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend);
+      
+      // Ensure we have a number for the pool ID
+      const numericPoolId = typeof poolId === 'string' ? parseInt(poolId) : poolId;
+      if (isNaN(numericPoolId)) {
+        throw new Error(`Invalid pool ID: ${poolId}`);
+      }
+      
+      console.log('[PoolService] Fetching pool with numeric ID:', numericPoolId);
+      const pool = await actor.get_by_pool_id(numericPoolId);
+      
+      if (!pool) {
+        throw new Error(`Pool ${poolId} not found`);
+      }
+      
+      return pool;
     } catch (error) {
-      console.error('Error fetching pool details:', error);
-      throw new Error(`Failed to fetch details for pool ${poolId}`);
+      console.error('[PoolService] Error fetching pool details:', error);
+      throw error;
     }
   }
 
@@ -72,7 +71,7 @@ export class PoolService {
     token1Symbol: string
   ): Promise<any> {
     try {
-      const actor =  await auth.getActor(kongBackendCanisterId, 'kong_backend', {anon: true});
+      const actor =  await auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, {anon: true, requiresSigning: false});
       const result = await actor.add_liquidity_amounts(
         token0Symbol,
         amount0,
@@ -96,24 +95,42 @@ export class PoolService {
   public static async calculateRemoveLiquidityAmounts(
     token0Symbol: string,
     token1Symbol: string,
-    lpTokenAmount: bigint
-  ): Promise<any> {
+    lpTokenAmount: number | bigint
+  ): Promise<[bigint, bigint]> {
     try {
-      const actor =  await auth.getActor(kongBackendCanisterId, 'kong_backend', {anon: true});
-      const result = await actor.remove_liquidity_amounts(
-        token0Symbol,
-        token1Symbol,
-        lpTokenAmount
-      );
-      
-      if (!result.Ok) {
-        throw new Error(result.Err || 'Failed to calculate removal amounts');
-      }
-      
-      return result;
+        const lpTokenBigInt = typeof lpTokenAmount === 'number' 
+            ? BigInt(Math.floor(lpTokenAmount * 1e8)) 
+            : lpTokenAmount;
+
+        const actor = await auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, {anon: false, requiresSigning: false});
+        
+        console.log('Calling remove_liquidity_amounts with:', {
+            token0Symbol,
+            token1Symbol,
+            lpTokenBigInt: lpTokenBigInt.toString()
+        });
+        
+        const result = await actor.remove_liquidity_amounts(
+            token0Symbol,
+            token1Symbol,
+            lpTokenBigInt
+        );
+        
+        console.log('Backend response:', result);
+
+        if (!result.Ok) {
+            throw new Error(result.Err || 'Failed to calculate removal amounts');
+        }
+        
+        // Handle the correct response format based on .did file
+        const reply = result.Ok;
+        return [
+            BigInt(reply.amount_0),
+            BigInt(reply.amount_1)
+        ];
     } catch (error) {
-      console.error('Error calculating removal amounts:', error);
-      throw error;
+        console.error('Error calculating removal amounts:', error);
+        throw error;
     }
   }
 
@@ -153,13 +170,13 @@ export class PoolService {
           params.token_1,
           params.amount_1,
         ),
-        auth.getActor(kongBackendCanisterId, 'kong_backend', {anon: true})
+        auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, { anon: false, requiresSigning: false })
       ]);
 
       const result = await actor.add_liquidity_async({
-        token_0: params.token_0.token,
+        token_0: params.token_0.symbol,
         amount_0: params.amount_0,
-        token_1: params.token_1.token,
+        token_1: params.token_1.symbol,
         amount_1: params.amount_1,
         tx_id_0: params.tx_id_0 || [],
         tx_id_1: params.tx_id_1 || []
@@ -181,8 +198,9 @@ export class PoolService {
    */
   public static async pollRequestStatus(requestId: bigint): Promise<any> {
     try {
-      const actor =  await auth.getActor(kongBackendCanisterId, 'kong_backend', {anon: true});
+      const actor =  await auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, {anon: false, requiresSigning: false});
       const result = await actor.requests([requestId]);
+      console.log('Request status:', result);
       
       if (!result.Ok || result.Ok.length === 0) {
         throw new Error('Failed to get request status');
@@ -195,19 +213,39 @@ export class PoolService {
     }
   }
 
-  public static async removeLiquidity(params: any): Promise<string> {
+  public static async removeLiquidity(params: {
+    token0: string,
+    token1: string,
+    lpTokenAmount: number | bigint
+  }): Promise<string> {
     await requireWalletConnection();
     try {
-      const actor =  await auth.getActor(kongBackendCanisterId, 'kong_backend', {anon: true});
-      const result = await actor.remove_liquidity_async({
-        token_0: params.token0,
-        token_1: params.token1,
-        remove_lp_token_amount: params.lpTokenAmount
-      });
-      return result.Ok;
+        // Ensure we're using BigInt for the amount
+        const lpTokenBigInt = typeof params.lpTokenAmount === 'number'
+            ? BigInt(Math.floor(params.lpTokenAmount * 1e8))
+            : params.lpTokenAmount;
+
+        console.log('Calling remove_liquidity_async with:', {
+            token_0: params.token0,
+            token_1: params.token1,
+            remove_lp_token_amount: lpTokenBigInt.toString()
+        });
+
+        const actor = await auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, {anon: false, requiresSigning: false});
+        const result = await actor.remove_liquidity_async({
+            token_0: params.token0,
+            token_1: params.token1,
+            remove_lp_token_amount: lpTokenBigInt
+        });
+
+        if (!result.Ok) {
+            throw new Error(result.Err || 'Failed to remove liquidity');
+        }
+
+        return result.Ok.toString();
     } catch (error) {
-      console.error('Error removing liquidity:', error);
-      throw new Error('Failed to remove liquidity');
+        console.error('Error removing liquidity:', error);
+        throw new Error(error.message || 'Failed to remove liquidity');
     }
   }
 
@@ -217,23 +255,36 @@ export class PoolService {
   public static async fetchUserPoolBalances(): Promise<FE.UserPoolBalance[]> {
     try {
       const wallet = get(auth);
+      console.log('[PoolService] Fetching user pool balances, wallet state:', {
+        isConnected: wallet.isConnected,
+        hasAccount: !!wallet.account,
+        accountOwner: wallet.account?.owner
+      });
+
       if (!wallet.isConnected || !wallet.account?.owner) {
+        console.log('[PoolService] Wallet not connected or no account owner, returning empty balances');
         return [];
       }
       
-      const actor = await auth.getActor(kongBackendCanisterId, canisterIDLs.kong_backend);
+      console.log('[PoolService] Creating actor...');
+      const actor = await auth.pnp.getActor(kongBackendCanisterId, canisterIDLs.kong_backend, {anon: false, requiresSigning: false});
+      
       if (!actor) {
+        console.error('[PoolService] Actor creation failed');
         throw new Error('Actor not available');
       }
-
+      
+      console.log('[PoolService] Actor created successfully, fetching balances...');
       const balances = await actor.user_balances([]);
+      console.log('[PoolService] Balances fetched successfully:', balances);
+      
       return balances;
     } catch (error) {
       if (error.message?.includes('Anonymous user')) {
-        // Return empty array for anonymous users
+        console.log('[PoolService] Anonymous user detected, returning empty balances');
         return [];
       }
-      console.error('Error fetching user pool balances:', error);
+      console.error('[PoolService] Error fetching user pool balances:', error);
       throw error;
     }
   }

@@ -12,13 +12,16 @@
   import ModernNavbar from "../themes/modern/Navbar.svelte";
   import PixelNavbar from "../themes/pixel/Navbar.svelte";
   import Sidebar from "$lib/components/sidebar/Sidebar.svelte";
+  import { sidebarStore } from "$lib/stores/sidebarStore";
 
   type Tab = "swap" | "earn" | "stats";
 
   let activeTab: Tab = "swap";
-  let sidebarOpen = false;
   let isModalOpen = false;
   let isMobile = false;
+
+  // Subscribe to sidebar store
+  $: sidebarOpen = $sidebarStore.isOpen;
 
   onMount(() => {
     const updateMobileState = () => {
@@ -35,7 +38,7 @@
   }
 
   function handleConnect() {
-    sidebarOpen = !sidebarOpen;
+    sidebarStore.toggleOpen();
   }
 
   function handleOpenSettings() {
@@ -64,7 +67,6 @@
       <ModernNavbar
         {activeTab}
         {sidebarOpen}
-        {isModalOpen}
         {isMobile}
         onTabChange={handleTabChange}
         onConnect={handleConnect}
@@ -83,7 +85,10 @@
     {/if}
   </div>
 
-  <Sidebar {sidebarOpen} onClose={() => (sidebarOpen = false)} />
+  <Sidebar
+    isOpen={$sidebarStore.isOpen}
+    onClose={() => sidebarStore.close()}
+  />
 
   <Modal
     bind:isOpen={isModalOpen}

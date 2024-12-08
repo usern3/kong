@@ -1,5 +1,4 @@
 // src/kong_svelte/src/lib/features/tokens/tokenStore.ts
-import type { TokenState } from "./types";
 import { kongDB } from "$lib/services/db";
 import { writable, derived, get, type Readable } from "svelte/store";
 import BigNumber from "bignumber.js";
@@ -11,7 +10,6 @@ import { auth } from "$lib/services/auth";
 import { liveQuery } from "dexie";
 import { Principal } from "@dfinity/principal";
 import { AnonymousIdentity } from "@dfinity/agent";
-import { poolStore } from "$lib/services/pools/poolStore";
 import { formatTokenAmount } from "$lib/utils/numberFormatUtils";
 
 BigNumber.config({
@@ -47,6 +45,19 @@ const debounce = <T extends (...args: any[]) => any>(fn: T, ms = 300): T => {
 };
 
 const DEBUG = true;
+
+interface TokenState {
+  tokens: FE.Token[];
+  balances: Record<string, FE.TokenBalance>;
+  prices: Record<string, number>;
+  isLoading: boolean;
+  error: string | null;
+  totalValueUsd: string;
+  lastTokensFetch: number | null;
+  activeSwaps: Record<string, any>;
+  favoriteTokens: Record<string, string[]>;
+  lastBalanceUpdate: Record<string, number>;
+}
 
 function createTokenStore() {
   const initialState: TokenState = {
@@ -84,6 +95,7 @@ function createTokenStore() {
       return {};
     }
     const walletId = principal.toString();
+
     if (!walletId) return {};
     try {
       const balances = await TokenService.fetchBalances(
@@ -103,42 +115,112 @@ function createTokenStore() {
   };
 
   eventBus.on('tokensFetched', async (fetchedTokens: FE.Token[]) => {
-    store.update((s) => ({
-      ...s,
-      tokens: fetchedTokens,
-      lastTokensFetch: Date.now(),
-      isLoading: false,
-    }));
-
     try {
+      // First try to get tokens with prices from kongDB
+      const cachedTokens = await kongDB.tokens
+        .where('timestamp')
+        .above(Date.now() - TokenService.TOKEN_CACHE_DURATION)
+        .toArray();
+
+      const tokensWithPrices = fetchedTokens.map(token => {
+        // Find cached token with price
+        const cachedToken = cachedTokens.find(t => t.canister_id === token.canister_id);
+        return {
+          ...token,
+          price: cachedToken?.price || 0,
+        } as FE.Token;
+      });
+
+      // Update store with initial tokens (with cached prices)
+      store.update((s) => ({
+        ...s,
+        tokens: tokensWithPrices,
+        lastTokensFetch: Date.now(),
+        isLoading: false,
+      }));
+
       const wallet = get(auth);
-      const enrichedTokens = await TokenService.enrichTokenWithMetadata(fetchedTokens);
+      const enrichedTokens = await TokenService.enrichTokenWithMetadata(tokensWithPrices);
       const validTokens = enrichedTokens
         .filter((result) => result.status === "fulfilled")
         .map((result) => (result as PromiseFulfilledResult<FE.Token>).value);
 
+      // Only fetch new prices for tokens that don't have a recent cached price
+      const tokensNeedingPrices = validTokens.filter(token => {
+        const cachedToken = cachedTokens.find(t => t.canister_id === token.canister_id);
+        const needsPrice = !cachedToken || (Date.now() - cachedToken.timestamp) > TokenService.TOKEN_CACHE_DURATION;
+        if (needsPrice) {
+          console.log(`Need to fetch new price for ${token.symbol}`);
+        }
+        return needsPrice;
+      });
+
+      let prices = {};
+      if (tokensNeedingPrices.length > 0) {
+        prices = await TokenService.fetchPrices(tokensNeedingPrices);
+        console.log('Fetched new prices:', prices);
+      }
+
+      // Combine cached prices with newly fetched prices
+      const allPrices = validTokens.reduce((acc, token) => {
+        const cachedToken = cachedTokens.find(t => t.canister_id === token.canister_id);
+        acc[token.canister_id] = prices[token.canister_id] || cachedToken?.price || 0;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      // Then load balances if we have a wallet
+      let balances = {};
+      if(wallet.account && wallet.account.owner) {
+        balances = await loadBalances(wallet.account.owner);
+      }
+
+      // Update everything at once to prevent multiple re-renders
       store.update((s) => ({
         ...s,
         tokens: validTokens,
+        prices: allPrices,
+        balances,
+        isLoading: false,
       }));
-      if(wallet.account && wallet.account.owner) {
-        const balances = await loadBalances(wallet.account.owner);
-        
-        store.update((s) => ({
-          ...s,
-          balances,
-        }));
-      }
+
     } catch (error: any) {
       console.error("Error enriching tokens:", error);
       store.update((s) => ({
         ...s,
         error: error.message,
-        tokens: [],
+        isLoading: false,
       }));
       toastStore.error("Failed to enrich tokens");
     }
   });
+
+  // Add pool update handler with debounce to prevent rapid updates
+  const debouncedPoolUpdate = debounce(async (pools: BE.Pool[]) => {
+    const currentStore = get(store);
+    const updatedTokens = currentStore.tokens.map(token => ({
+      ...token,
+      pools: pools.filter(p => p.address_0 === token.canister_id || p.address_1 === token.canister_id),
+      total_24h_volume: BigInt(pools
+        .filter(p => p.address_0 === token.canister_id || p.address_1 === token.canister_id)
+        .reduce((acc, p) => acc + BigInt(p.rolling_24h_volume), 0n)
+      ).toString(),
+    }));
+
+    // Update tokens and trigger a price refresh
+    store.update(state => ({
+      ...state,
+      tokens: updatedTokens,
+    }));
+
+    // Refresh prices after pool update
+    const prices = await TokenService.fetchPrices(updatedTokens);
+    store.update(state => ({
+      ...state,
+      prices,
+    }));
+  }, 1000);
+
+  eventBus.on('poolsUpdated', debouncedPoolUpdate);
 
   return {
     subscribe: store.subscribe,
@@ -347,35 +429,31 @@ function createTokenStore() {
       // Cleanup any active subscriptions or connections
       store.set(initialState);
     },
+    updateBalances: (newBalances: Record<string, { in_tokens: bigint; in_usd: string }>) => {
+      store.update(state => {
+        const updatedState = {
+          ...state,
+          balances: { ...newBalances }
+        };
+        return updatedState;
+      });
+    },
+    updateTokenBalance: (tokenId: string, balance: { in_tokens: bigint; in_usd: string }) => {
+      store.update(state => ({
+        ...state,
+        balances: {
+          ...state.balances,
+          [tokenId]: balance
+        }
+      }));
+    },
   };
 }
 
 export const cleanup = () => {
 };
 
-export const tokenStore: {
-  subscribe: (run: (value: TokenState) => void) => () => void;
-  update: (updater: (state: TokenState) => TokenState) => void;
-  loadTokens: (forceRefresh?: boolean) => Promise<FE.Token[]>;
-  loadBalances: (principal: Principal) => Promise<Record<string, FE.TokenBalance>>;
-  loadBalance: (
-    token: FE.Token,
-    principalId?: string,
-    forceRefresh?: boolean,
-  ) => Promise<FE.TokenBalance>;
-  loadPrices: () => Promise<Record<string, number>>;
-  loadPrice: (token: FE.Token) => Promise<number>;
-  refetchPrice: (token: FE.Token) => Promise<number>;
-  clearUserData: () => void;
-  clearCache: () => Promise<void>;
-  loadFavorites: () => Promise<string[]>;
-  toggleFavorite: (canister_id: string) => void;
-  isFavorite: (canister_id: string) => boolean;
-  getFavorites: (walletId?: string) => string[];
-  getToken: (canister_id: string) => FE.Token | null;
-  claimFaucetTokens: () => Promise<void>;
-  cleanup: () => Promise<void>;
-} = createTokenStore();
+export const tokenStore = createTokenStore();
 
 const liveTokensQuery = liveQuery(async () => {
   return await kongDB.tokens.toArray();
@@ -397,25 +475,45 @@ export const formattedTokens = derived(
     const walletId = wallet?.account?.owner?.toString() || "anonymous";
     const favorites = $tokenStore?.favoriteTokens[walletId] || [];
     
-    return $liveTokens
+    return ($liveTokens as FE.Token[])
       .map(token => {
         const balance = $tokenStore.balances[token.canister_id]?.in_tokens || BigInt(0);
         const amount = toTokenDecimals(balance.toString(), token.decimals);
         const price = $tokenStore.prices[token.canister_id] || 0;
-        const formattedBalance = amount.toFormat(token.decimals);
+        
+        // Format balance with appropriate decimals based on value
+        let formattedBalance;
+        const numericAmount = Number(amount);
+        if (numericAmount === 0) {
+          formattedBalance = "0";
+        } else if (numericAmount < 0.000001) {
+          formattedBalance = amount.toFormat(8);
+        } else if (numericAmount < 0.01) {
+          formattedBalance = amount.toFormat(6);
+        } else {
+          formattedBalance = amount.toFormat(4);
+        }
+        
+        // Remove trailing zeros
+        formattedBalance = formattedBalance.replace(/\.?0+$/, '');
+        
         const usdValue = amount.times(price);
         const isFavorite = favorites.includes(token.canister_id);
 
         return {
           ...token,
+          metrics: {
+            ...token.metrics,
+            price: price.toString(),
+            market_cap: (Number(price) * (Number(token.metrics?.total_supply) / Math.pow(10, token.decimals))).toString(),
+          },
           balance: balance.toString(),
           formattedBalance,
-          price,
           formattedUsdValue: formatToNonZeroDecimal(usdValue.toString()),
-          total_24h_volume: token.total_24h_volume || 0n,
+          total_24h_volume: token.metrics.volume_24h || "0",
           usdValue: Number(usdValue),
           isFavorite
-        };
+        } as FE.Token;
       })
       .sort((a, b) => {
         // Sort by favorites first
@@ -423,7 +521,9 @@ export const formattedTokens = derived(
         if (!a.isFavorite && b.isFavorite) return 1;
         
         // Then sort by USD value
-        return b.usdValue - a.usdValue;
+        const aValue = a.usdValue ?? 0;
+        const bValue = b.usdValue ?? 0;
+        return bValue - aValue;
       });
   }
 );
@@ -444,21 +544,27 @@ export const favoriteTokens = derived(
   }
 );
 
-export const portfolioValue = derived([tokenStore, poolStore], ([$tokenStore, $poolStore]) => {
-  if (!$tokenStore?.tokens || !$poolStore?.pools) return "0.00";
-  let totalValue = 0.0;
+export const portfolioValue = derived(
+  [tokenStore, formattedTokens],
+  ([$tokenStore, $formattedTokens]) => {
+    if (!$formattedTokens) return "$0.00";
 
-  for (const token of $tokenStore.tokens) {
-    const usdValue = Number(
-      $tokenStore?.balances[token.canister_id]?.in_usd?.replace(/,/g, '') || "0",
-    );
-    totalValue += usdValue;
+    const total = $formattedTokens.reduce((sum, token) => {
+      const balance = $tokenStore.balances[token.canister_id]?.in_tokens || 0n;
+      const price = $tokenStore.prices[token.canister_id] || 0;
+      const amount = Number(balance) / Math.pow(10, token.decimals);
+      return sum + (amount * price);
+    }, 0);
+
+    // Format with commas and 2 decimal places
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(total);
   }
-  return totalValue.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-});
+);
 
 export const tokenPrices = derived(tokenStore, ($store) => $store?.prices ?? {});
 
@@ -520,8 +626,8 @@ export const getFavoritesForWallet = derived(tokenStore, ($store) => {
   const walletId = wallet?.account?.owner?.toString() || "anonymous";
   return $store?.favoriteTokens[walletId] || [];
 });
-
 export const getTokenDecimals = (canister_id: string): number => {
   const token = tokenStore.getToken(canister_id);
   return token?.decimals || 0;
 };
+

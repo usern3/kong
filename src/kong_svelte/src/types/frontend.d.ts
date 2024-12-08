@@ -7,11 +7,14 @@ declare global {
 
     interface Token {
       canister_id: string;
+      address: string;
       name: string;
       symbol: string;
-      fee: bigint;
+      fee: number;
+      fee_fixed: string;
       decimals: number;
       token: string;
+      token_type: string;
       token_id: number;
       chain: string;
       icrc1: boolean;
@@ -19,15 +22,25 @@ declare global {
       icrc3: boolean;
       on_kong: boolean;
       pool_symbol: string;
-      pools: BE.Pool[];
-      logo?: string;
-      total_24h_volume?: bigint;
-      price?: number;
-      tvl?: number;
-      balance?: bigint;
+      pools: any[];
+      metrics: {
+        total_supply: string;
+        price: string;
+        volume_24h: string;
+        market_cap: string;
+        updated_at: string;
+        price_change_24h?: string;
+      };
+      logo_url: string;
+      total_24h_volume: string;
+      price: number;
+      tvl: number;
+      balance: string;
+      timestamp?: number;
+      isFavorite?: boolean;
+      usdValue?: number;
       formattedBalance?: string;
       formattedUsdValue?: string;
-      timestamp?: number;
     }
 
     interface UserPoolBalance {

@@ -43,6 +43,14 @@ interface RequestResponse {
   Ok: RequestStatus[];
 }
 
+interface TokenInfo {
+  canister_id: string;
+  fee?: bigint;
+  fee_fixed: bigint;
+  icrc1?: boolean;
+  icrc2?: boolean;
+}
+
 // Base BigNumber configuration for internal calculations
 // Set this high enough to handle intermediate calculations without loss of precision
 BigNumber.config({
@@ -53,13 +61,13 @@ BigNumber.config({
 
 export class SwapService {
   private static pollingInterval: ReturnType<typeof setInterval> | null = null;
-  private static readonly POLLING_INTERVAL = 500; // 1 second
-  private static readonly MAX_ATTEMPTS = 30; // 1 minute maximum
+  private static readonly POLLING_INTERVAL = 350; // .3 second
+  private static readonly MAX_ATTEMPTS = 40; 
 
   public static toBigInt(amount: string, decimals: number): bigint {
-    if (!amount || isNaN(Number(amount))) return BigInt(0);
+    if (!amount || isNaN(Number(amount.replace(/_/g, '')))) return BigInt(0);
     return BigInt(
-      new BigNumber(amount).times(new BigNumber(10).pow(decimals)).toString(),
+      new BigNumber(amount.replace(/_/g, '')).times(new BigNumber(10).pow(decimals)).toString(),
     );
   }
 
@@ -130,10 +138,10 @@ export class SwapService {
 
     const tokens = get(tokenStore).tokens;
     const receiveToken = tokens.find(
-      (t) => t.canister_id === params.receiveToken.canister_id,
+      (t) => t.address === params.receiveToken.address,
     );
     const payToken = tokens.find(
-      (t) => t.canister_id === params.payToken.canister_id,
+      (t) => t.address === params.payToken.address,
     );
     if (!receiveToken) throw new Error("Receive token not found");
 
@@ -150,7 +158,7 @@ export class SwapService {
       const tx = quote.Ok.txs[0];
       lpFee = SwapService.fromBigInt(tx.lp_fee, receiveToken.decimals);
       gasFee = SwapService.fromBigInt(tx.gas_fee, receiveToken.decimals);
-      tokenFee = payToken.fee.toString();
+      tokenFee = payToken.fee_fixed.toString();
     }
 
     return {
@@ -183,7 +191,10 @@ export class SwapService {
         canisterIDLs.kong_backend,
         { anon: false, requiresSigning: false },
       );
-      return await actor.swap_async(params);
+      console.log("SWAP_ASYNC ACTOR", actor);
+      const result = await actor.swap_async(params);
+      console.log("SWAP_ASYNC RESULT", result);
+      return result;
     } catch (error) {
       console.error("Error in swap_async:", error);
       throw error;
@@ -200,7 +211,10 @@ export class SwapService {
         canisterIDLs.kong_backend,
         { anon: false, requiresSigning: false },
       );
+      console.log("REQUESTS ACTOR", actor);
+      console.log("REQUESTS REQUEST IDS", requestIds);
       const result = await actor.requests(requestIds);
+      console.log("REQUESTS RESULT", result);
       return result;
     } catch (error) {
       console.error("Error getting request status:", error);
@@ -218,11 +232,10 @@ export class SwapService {
     try {
       await Promise.all([
         requireWalletConnection(),
-        tokenStore.loadBalances(auth?.pnp?.account?.owner),
       ]);
       const tokens = get(tokenStore).tokens;
       const payToken = tokens.find(
-        (t) => t.canister_id === params.payToken.canister_id,
+        (t) => t.address === params.payToken.address,
       );
       if (!payToken) throw new Error("Pay token not found");
 
@@ -231,7 +244,7 @@ export class SwapService {
         payToken.decimals,
       );
       const receiveToken = tokens.find(
-        (t) => t.canister_id === params.receiveToken.canister_id,
+        (t) => t.address === params.receiveToken.address,
       );
       if (!receiveToken) throw new Error("Receive token not found");
 
@@ -244,26 +257,27 @@ export class SwapService {
         "Processing transfer/approval for amount:",
         payAmount.toString(),
       );
+
+      let txId: bigint | false;
+      let approvalId: bigint | false;
       const toastId = toastStore.info(
         `Swapping ${params.payAmount} ${params.payToken.symbol} to ${params.receiveAmount} ${params.receiveToken.symbol}...`,
         0,
       );
-
-      let txId: bigint | false;
-      let approvalId: bigint | false;
-
       if (payToken.icrc2) {
         const requiredAllowance = payAmount;
+        console.log("CHECKING AND REQUESTING IC2 ALLOWANCES, REQUIRED ALLOWANCE", requiredAllowance);
         approvalId = await IcrcService.checkAndRequestIcrc2Allowances(
           payToken,
           requiredAllowance,
         );
       } else if (payToken.icrc1) {
+        console.log("ICRC1 PAY TOKEN DETECTED", payToken);
         const result = await IcrcService.icrc1Transfer(
           payToken,
           params.backendPrincipal,
           payAmount,
-          { fee: BigInt(payToken.fee) },
+          { fee: BigInt(payToken.fee_fixed) },
         );
 
         if (result?.Ok) {
@@ -290,14 +304,16 @@ export class SwapService {
 
       const swapParams = {
         pay_token: params.payToken.symbol,
-        pay_amount: payAmount,
+        pay_amount: BigInt(payAmount),
         receive_token: params.receiveToken.symbol,
-        receive_amount: [receiveAmount],
+        receive_amount: [BigInt(receiveAmount)],
         max_slippage: [params.userMaxSlippage],
         receive_address: [],
         referred_by: [],
         pay_tx_id: txId ? [{ BlockIndex: Number(txId) }] : [],
       };
+
+      console.log("SWAP PARAMS", swapParams);
       const result = await SwapService.swap_async(swapParams);
 
       if (result.Ok) {
@@ -307,20 +323,6 @@ export class SwapService {
         console.error("Swap error:", result.Err);
         return false;
       }
-
-      await Promise.all([
-        tokenStore.loadBalance(
-          tokens.find((t) => t.canister_id === params.receiveToken.canister_id),
-          auth?.pnp?.account?.owner?.toString(),
-          true,
-        ),
-        tokenStore.loadBalance(
-          tokens.find((t) => t.canister_id === params.payToken.canister_id),
-          auth?.pnp?.account?.owner?.toString(),
-          true,
-        ),
-      ]);
-
       return result.Ok;
     } catch (error) {
       swapStatusStore.updateSwap(swapId, {
@@ -337,7 +339,7 @@ export class SwapService {
   public static async monitorTransaction(requestId: bigint, swapId: string) {
     this.stopPolling();
 
-    console.log("REQUEST ID:", requestId);
+    console.log("SWAP MONITORING - REQUEST ID:", requestId);
     let attempts = 0;
     let swapStatus = swapStatusStore.getSwap(swapId);
     const toastId = toastStore.info(
@@ -346,6 +348,7 @@ export class SwapService {
     );
 
     this.pollingInterval = setInterval(async () => {
+      console.log(`SWAP MONITORING - POLLING ATTEMPT ${attempts}`);
       try {
         const status: RequestResponse = await this.requests([requestId]);
 
@@ -375,14 +378,6 @@ export class SwapService {
             });
 
             if (swapStatus.status === "Success") {
-              swapStatusStore.updateSwap(swapId, {
-                status: "Success",
-                isProcessing: false,
-                shouldRefreshQuote: true,
-                lastQuote: null,
-              });
-              this.stopPolling();
-
               const formattedPayAmount = SwapService.fromBigInt(
                 swapStatus.pay_amount,
                 getTokenDecimals(swapStatus.pay_symbol),
@@ -397,20 +392,51 @@ export class SwapService {
               const token1 = get(tokenStore).tokens.find(
                 (t) => t.symbol === swapStatus.receive_symbol,
               );
-              toastStore.success(
-                `Successfully swapped ${formatTokenAmount(formattedPayAmount, token0?.decimals)} ${token0?.symbol} to ${formatTokenAmount(formattedReceiveAmount, token1?.decimals)} ${token1?.symbol}!`,
-              );
-              // Dispatch custom event with swap details
-              window.dispatchEvent(
-                new CustomEvent("swapSuccess", {
-                  detail: {
-                    payAmount: formattedPayAmount,
-                    payToken: swapStatus.pay_symbol,
-                    receiveAmount: formattedReceiveAmount,
-                    receiveToken: swapStatus.receive_symbol,
-                  },
-                }),
-              );
+
+              // Update swap status with complete details
+              swapStatusStore.updateSwap(swapId, {
+                status: "Success",
+                isProcessing: false,
+                shouldRefreshQuote: true,
+                lastQuote: null,
+                details: {
+                  payAmount: formattedPayAmount,
+                  payToken: token0,
+                  receiveAmount: formattedReceiveAmount,
+                  receiveToken: token1,
+                }
+              });
+
+              // Load updated balances immediately and after delays
+              const tokens = get(tokenStore).tokens;
+              const payToken = tokens.find((t) => t.symbol === swapStatus.pay_symbol);
+              const receiveToken = tokens.find((t) => t.symbol === swapStatus.receive_symbol);
+              const walletId = auth?.pnp?.account?.owner?.toString();
+
+              if (!payToken || !receiveToken || !walletId) {
+                console.error("Missing token or wallet info for balance update");
+                return;
+              }
+
+              const updateBalances = async () => {
+                try {
+                  await Promise.all([
+                    tokenStore.loadBalance(receiveToken, walletId, true),
+                    tokenStore.loadBalance(payToken, walletId, true)
+                  ]);
+                } catch (error) {
+                  console.error("Error updating balances:", error);
+                }
+              };
+
+              // Update immediately
+              await updateBalances();
+
+              // Schedule updates with increasing delays
+              const delays = [500, 1000, 2000, 3000, 5000];
+              delays.forEach(delay => {
+                setTimeout(updateBalances, delay);
+              });
 
               toastStore.dismiss(toastId);
             } else if (swapStatus.status === "Failed") {
@@ -485,7 +511,7 @@ export class SwapService {
     }
 
     try {
-      const payDecimals = getTokenDecimals(payToken.canister_id);
+      const payDecimals = getTokenDecimals(payToken.address);
       const payAmountBigInt = this.toBigInt(amount, payDecimals);
       const quote = await this.swap_amounts(
         payToken,
@@ -494,7 +520,7 @@ export class SwapService {
       );
 
       if ("Ok" in quote) {
-        const receiveDecimals = getTokenDecimals(receiveToken.canister_id);
+        const receiveDecimals = getTokenDecimals(receiveToken.address);
         const receivedAmount = this.fromBigInt(
           quote.Ok.receive_amount,
           receiveDecimals,
@@ -502,7 +528,7 @@ export class SwapService {
 
         const store = get(tokenStore);
         const price = await tokenStore.refetchPrice(
-          store.tokens.find((t) => t.canister_id === receiveToken.canister_id),
+          store.tokens.find((t) => t.address === receiveToken.address),
         );
         const usdValueNumber =
           parseFloat(receivedAmount) * parseFloat(price.toString());
@@ -531,13 +557,7 @@ export class SwapService {
    * @returns A BigNumber representing the maximum transferable amount.
    */
   public static calculateMaxAmount(
-    tokenInfo: {
-      canister_id: string;
-      fee?: bigint;
-      icrc1?: boolean;
-      icrc2?: boolean;
-      // Add other relevant properties if needed
-    },
+    tokenInfo: TokenInfo,
     formattedBalance: string,
     decimals: number = 8,
     isIcrc1: boolean = false,
@@ -546,8 +566,8 @@ export class SwapService {
     const balance = new BigNumber(formattedBalance);
 
     // Calculate base fee. If fee is undefined, default to 0.
-    const baseFee = tokenInfo.fee
-      ? new BigNumber(tokenInfo.fee.toString()).dividedBy(SCALE_FACTOR)
+    const baseFee = tokenInfo.fee_fixed
+      ? new BigNumber(tokenInfo.fee_fixed.toString()).dividedBy(SCALE_FACTOR)
       : new BigNumber(0);
 
     // Calculate gas fee based on token standard
