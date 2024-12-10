@@ -1,16 +1,16 @@
-import { browser } from "$app/environment";
+/// <reference types="@sveltejs/kit" />
+/// <reference no-default-lib="true"/>
+/// <reference lib="esnext" />
+/// <reference lib="webworker" />
+
 import { tokenStore } from "./tokens/tokenStore";
 import { poolStore } from "./pools/poolStore";
 import { get } from "svelte/store";
 import { auth } from "./auth";
 import * as Comlink from "comlink";
-import { swapActivityStore } from "$lib/stores/swapActivityStore";
 import { formatTokenAmount, formatToNonZeroDecimal } from "$lib/utils/numberFormatUtils";
-import type { WorkerApi, BatchPreloadResult, UpdateType } from "$lib/workers/updateWorker";
-import { tokenLogoStore, getAllTokenLogos } from "$lib/services/tokens/tokenLogos";
-import { DEFAULT_LOGOS } from "$lib/services/tokens/tokenLogos";
+import type { WorkerApi, UpdateType } from "$lib/workers/updateWorker";
 import { appLoader } from "$lib/services/appLoader"; // Import appLoader
-import { writable } from "svelte/store";
 
 class UpdateWorkerService {
   private worker: Worker | null = null;
@@ -18,7 +18,6 @@ class UpdateWorkerService {
   private isInitialized = false;
   private isInBackground = false;
   private updateInterval: number | null = null;
-  private _loadingState = writable({ loaded: 0, total: 0, errors: [] });
 
   // Public getter for initialization status
   public getIsInitialized(): boolean {
@@ -26,56 +25,19 @@ class UpdateWorkerService {
   }
 
   async initialize() {
-    if (!browser || this.isInitialized) return;
-
+    const INIT_TIMEOUT = 60000; // 60 seconds timeout
+    
     try {
-      console.log('Initializing update worker service...');
-      
-      // Add visibility change listener
-      document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
-      
-      this.worker = new Worker(
-        new URL("../workers/updateWorker.ts", import.meta.url),
-        { type: "module" },
-      );
-
-      // Set up message handler
-      this.worker.addEventListener('message', this.handleWorkerMessage.bind(this));
-
-      // Create proxy to worker with proper typing
-      this.workerApi = Comlink.wrap<WorkerApi>(this.worker);
-      
-      // First load tokens if they haven't been loaded yet
-      const tokens = get(tokenStore);
-      if (!tokens?.tokens?.length) {
-        await tokenStore.loadTokens();
-      }
-      
-      // Send tokens to the worker
-      await this.workerApi.setTokens(tokens.tokens);
-
-      // Optionally, trigger token logo loading
-      console.log('UpdateWorkerService: Instructing worker to load token logos...');
-      await this.loadTokenLogos();
-
-      // Start updates and wait for initial data
-      const updateStarted = await this.startUpdates();
-      if (!updateStarted) {
-        console.warn('Failed to start worker updates, falling back to direct updates');
-        this.startFallbackUpdates();
-        return false;
-      }
-      
-      // Wait for initial token logos to be loaded
-      await this.loadTokenLogos();
-      
-      this.isInitialized = true;
-      console.log('Update worker service initialized successfully');
-      
+      await Promise.race([
+        this.initializeWorker(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Initialization timeout')), INIT_TIMEOUT)
+        )
+      ]);
       return true;
     } catch (error) {
-      console.error("Failed to initialize update worker:", error);
-      // Fallback to non-worker updates if worker fails
+      console.error('Failed to initialize update worker service:', error);
+      // Start fallback updates if worker initialization fails
       this.startFallbackUpdates();
       return false;
     }
@@ -100,11 +62,6 @@ class UpdateWorkerService {
 
   private handleWorkerMessage(event: MessageEvent) {
     if (event.data.type === 'TOKEN_LOGOS_LOADED') {
-      // Merge with existing logos
-      tokenLogoStore.update(logos => ({
-        ...logos,
-        ...event.data.logos
-      }));
       return;
     }
 
@@ -128,8 +85,6 @@ class UpdateWorkerService {
         case 'pool':
           this.updatePools();
           break;
-        case 'swapActivity':
-          this.updateSwapActivity();
           break;
         case 'price':
           if (!this.isInBackground) {
@@ -181,10 +136,6 @@ class UpdateWorkerService {
     }
   }
 
-  private async updateSwapActivity() {
-    // Swap activity update logic here
-  }
-
   private async updatePrices() {    
     try {
       const currentStore = get(tokenStore);
@@ -221,11 +172,9 @@ class UpdateWorkerService {
   private async waitForTokens(): Promise<void> {
     const tokens = get(tokenStore);
     if (tokens?.tokens?.length) {
-      console.log('Tokens already loaded:', tokens.tokens.length);
       return;
     }
 
-    console.log('Waiting for tokens to load...');
     return new Promise<void>((resolve) => {
       const unsubscribe = tokenStore.subscribe(value => {
         if (value?.tokens?.length) {
@@ -265,7 +214,6 @@ class UpdateWorkerService {
       await Promise.all([
         this.updateTokens(),
         this.updatePools(),
-        this.updateSwapActivity(),
         !this.isInBackground && this.updatePrices(),
       ].filter(Boolean));
 
@@ -284,7 +232,6 @@ class UpdateWorkerService {
       Promise.all([
         this.updateTokens(),
         this.updatePools(),
-        this.updateSwapActivity(),
         !this.isInBackground && this.updatePrices(),
       ].filter(Boolean));
     }, 10000); // Update every 10 seconds
@@ -293,148 +240,8 @@ class UpdateWorkerService {
     await Promise.all([
       this.updateTokens(),
       this.updatePools(),
-      this.updateSwapActivity(),
       !this.isInBackground && this.updatePrices(),
     ].filter(Boolean));
-  }
-
-  public async preloadAssets(assets: string[]): Promise<{
-    loaded: number;
-    total: number;
-    errors: string[];
-  }> {
-    if (!this.workerApi) {
-      console.warn('Worker not initialized, falling back to main thread asset loading');
-      return this.fallbackPreloadAssets(assets);
-    }
-
-    try {
-      return await this.workerApi.preloadAssets(assets);
-    } catch (error) {
-      console.error('Worker failed to preload assets:', error);
-      return this.fallbackPreloadAssets(assets);
-    }
-  }
-
-  private async fallbackPreloadAssets(assets: string[]): Promise<{
-    loaded: number;
-    total: number;
-    errors: string[];
-  }> {
-    let loaded = 0;
-    const errors: string[] = [];
-    const total = assets.length;
-
-    for (const asset of assets) {
-      try {
-        await fetch(asset);
-        loaded++;
-      } catch (error) {
-        errors.push(`Failed to load ${asset}: ${error}`);
-        loaded++; // Still increment to show progress
-      }
-    }
-
-    return { loaded, total, errors };
-  }
-
-  async preloadAsset(url: string): Promise<string> {
-    // If worker is not initialized, use direct asset loading
-    if (!this.workerApi) {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Failed to load asset: ${response.statusText}`);
-        }
-        
-        // Handle ICP canister URLs as images
-        if (this.isCanisterUrl(url)) {
-          const blob = await response.blob();
-          if (!blob.type.startsWith('image/')) {
-            console.warn(`Unexpected content type for canister asset: ${blob.type}`);
-          }
-          return URL.createObjectURL(blob);
-        }
-        
-        // Handle other asset types
-        if (url.endsWith('.svg')) {
-          const text = await response.text();
-          if (!text.includes('<svg')) {
-            throw new Error('Invalid SVG content');
-          }
-          return url;
-        } else if (url.match(/\.(png|jpe?g|gif|webp|bmp|ico)$/i)) {
-          const blob = await response.blob();
-          return URL.createObjectURL(blob);
-        } else {
-          console.warn(`Using original URL for unsupported asset type: ${url}`);
-          return url;
-        }
-      } catch (error) {
-        console.error(`Failed to preload asset ${url}:`, error);
-        return url;
-      }
-    }
-    
-    return this.workerApi.preloadAsset(url);
-  }
-
-  async batchPreloadAssets(assets: string[], batchSize: number = 5): Promise<BatchPreloadResult> {
-    // If worker is not initialized, use direct asset loading
-    if (!this.workerApi) {
-      try {
-        const results = await Promise.all(
-          assets.map(async (url) => {
-            try {
-              await this.preloadAsset(url);
-              return { success: true };
-            } catch {
-              return { success: false };
-            }
-          })
-        );
-        
-        return {
-          success: true,
-          loadingState: {
-            assetsLoaded: results.filter(r => r.success).length,
-            totalAssets: assets.length,
-            errors: []
-          }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          loadingState: {
-            assetsLoaded: 0,
-            totalAssets: assets.length,
-            errors: []
-          }
-        };
-      }
-    }
-    
-    return this.workerApi.batchPreloadAssets(assets, batchSize);
-  }
-
-  async loadTokenLogos(): Promise<boolean> {
-    if (!this.workerApi) {
-      console.error('Worker API not available for loading token logos');
-      return false;
-    }
-
-    try {
-      const logos = await this.workerApi.loadTokenLogos();
-
-      // Update the token logo store
-      tokenLogoStore.set(logos);
-      
-      return true;
-    } catch (error) {
-      console.warn('UpdateWorkerService: Failed to load token logos:', error);
-      return false;
-    }
   }
 
   destroy() {
@@ -444,6 +251,45 @@ class UpdateWorkerService {
       this.workerApi = null;
     }
   }
+
+  // Add this private method to handle worker initialization
+  private async initializeWorker(): Promise<void> {
+    console.log('Initializing update worker service...');
+    
+    // Add visibility change listener
+    document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
+    
+    this.worker = new Worker(
+      new URL("../workers/updateWorker.ts", import.meta.url),
+      { type: "module" },
+    );
+
+    // Set up message handler
+    this.worker.addEventListener('message', this.handleWorkerMessage.bind(this));
+
+    // Create proxy to worker with proper typing
+    this.workerApi = Comlink.wrap<WorkerApi>(this.worker);
+    
+    // First load tokens if they haven't been loaded yet
+    const tokens = get(tokenStore);
+    if (!tokens?.tokens?.length) {
+      await tokenStore.loadTokens();
+    }
+    
+    // Send tokens to the worker
+    await this.workerApi.setTokens(tokens.tokens);
+
+    // Start updates and wait for initial data
+    const updateStarted = await this.startUpdates();
+    if (!updateStarted) {
+      console.warn('Failed to start worker updates, falling back to direct updates');
+      this.startFallbackUpdates();
+      return;
+    }
+    
+    this.isInitialized = true;
+  }
 }
 
 export const updateWorkerService = new UpdateWorkerService();
+

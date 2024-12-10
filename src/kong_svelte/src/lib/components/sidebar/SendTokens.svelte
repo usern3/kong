@@ -1,12 +1,10 @@
 <script lang="ts">
-    import { fade } from 'svelte/transition';
-    import { backOut } from 'svelte/easing';
-    import { tweened } from 'svelte/motion';
+    import { fade, fly } from 'svelte/transition';
     import { IcrcService } from "$lib/services/icrc/IcrcService";
-    import { tokenLogoStore } from "$lib/services/tokens/tokenLogos";
     import { toastStore } from "$lib/stores/toastStore";
     import { Principal } from "@dfinity/principal";
-    import Button from '$lib/components/common/Button.svelte';
+    import Modal from '$lib/components/common/Modal.svelte';
+    import { formatTokenAmount } from '$lib/utils/numberFormatUtils';
 
     export let token: {
         symbol: string;
@@ -19,20 +17,28 @@
     let amount = '';
     let isValidating = false;
     let errorMessage = '';
-    let maxAmount = parseFloat(token.amount);
+    $: maxAmount = parseFloat(formatTokenAmount(token.balance, token.decimals));
     let addressType: 'principal' | 'account' | null = null;
+    let showHelp = false;
+    let showConfirmation = false;
 
-    const progress = tweened(0, {
-        duration: 1000,
-        easing: backOut
-    });
+    function isValidHex(str: string): boolean {
+        const hexRegex = /^[0-9a-fA-F]+$/;
+        return hexRegex.test(str);
+    }
 
     function detectAddressType(address: string): 'principal' | 'account' | null {
+        if (!address) return null;
+
+        // Principal validation
         try {
             Principal.fromText(address);
             return 'principal';
         } catch {
-            if (address.length === 64) {
+            // Account validation
+            // Remove any whitespace and check if it's exactly 64 characters
+            const cleanAddress = address.replace(/\s/g, '');
+            if (cleanAddress.length === 64 && isValidHex(cleanAddress)) {
                 return 'account';
             }
             return null;
@@ -40,22 +46,62 @@
     }
 
     function validateAddress(address: string): boolean {
-        const type = detectAddressType(address);
-        addressType = type;
-        return type !== null;
+        if (!address) return false;
+
+        // Remove any whitespace for validation
+        const cleanAddress = address.trim();
+        
+        // Basic format checks
+        if (cleanAddress.length === 0) {
+            errorMessage = 'Address cannot be empty';
+            return false;
+        }
+
+        addressType = detectAddressType(cleanAddress);
+
+        if (addressType === null) {
+            if (cleanAddress.length === 64 && !isValidHex(cleanAddress)) {
+                errorMessage = 'Account ID must be a valid hexadecimal string';
+            } else if (cleanAddress.length === 64) {
+                errorMessage = 'Invalid Account ID format';
+            } else {
+                errorMessage = 'Invalid address format - must be a Principal ID or Account ID';
+            }
+            return false;
+        }
+
+        // Additional Principal-specific validation
+        if (addressType === 'principal') {
+            try {
+                const principal = Principal.fromText(cleanAddress);
+                if (principal.isAnonymous()) {
+                    errorMessage = 'Cannot send to anonymous principal';
+                    return false;
+                }
+            } catch (err) {
+                errorMessage = 'Invalid Principal ID format';
+                return false;
+            }
+        }
+
+        errorMessage = '';
+        return true;
     }
 
     function validateAmount(value: string): boolean {
         if (!value) return false;
         const numValue = parseFloat(value);
+        
         if (isNaN(numValue) || numValue <= 0) {
             errorMessage = 'Amount must be greater than 0';
             return false;
         }
+        
         if (numValue > maxAmount) {
             errorMessage = 'Insufficient balance';
             return false;
         }
+        
         return true;
     }
 
@@ -63,15 +109,12 @@
         const input = event.target as HTMLInputElement;
         let value = input.value.replace(/[^0-9.]/g, '');
         
-        // Only allow one decimal point
-        const decimalPoints = value.match(/\./g)?.length || 0;
-        if (decimalPoints > 1) {
-            value = value.slice(0, value.lastIndexOf('.'));
+        const parts = value.split('.');
+        if (parts.length > 2) {
+            value = `${parts[0]}.${parts[1]}`;
         }
 
-        // Limit decimal places to token decimals
-        const parts = value.split('.');
-        if (parts[1] && parts[1].length > token.decimals) {
+        if (parts[1]?.length > token.decimals) {
             value = `${parts[0]}.${parts[1].slice(0, token.decimals)}`;
         }
 
@@ -81,50 +124,36 @@
     }
 
     async function handleSubmit() {
+        showConfirmation = true;
+    }
+
+    async function confirmTransfer() {
         isValidating = true;
         errorMessage = '';
-
-        if (!validateAddress(recipientAddress)) {
-            errorMessage = 'Invalid address format';
-            isValidating = false;
-            return;
-        }
-
-        if (!validateAmount(amount)) {
-            isValidating = false;
-            return;
-        }
+        showConfirmation = false;
 
         try {
-            progress.set(0);
             const decimals = token.decimals || 8;
-            const amountBigInt = BigInt(
-                Math.floor(parseFloat(amount) * Math.pow(10, decimals))
-            );
+            const amountBigInt = BigInt(Math.floor(parseFloat(amount) * 10 ** decimals));
 
-            const result = await IcrcService.icrc1Transfer(
-                token,
-                recipientAddress,
-                amountBigInt
-            );
+            const result = await IcrcService.icrc1Transfer(token, recipientAddress, amountBigInt);
 
             if (result?.Ok) {
-                toastStore.success("Token sent successfully");
+                toastStore.success("Transfer successful");
                 recipientAddress = '';
                 amount = '';
             } else if (result?.Err) {
-                const errMsg = typeof result.Err === "object"
-                    ? Object.entries(result.Err)[0][0]
-                    : JSON.stringify(result.Err);
-                errorMessage = `Failed to send token: ${errMsg}`;
+                const errMsg = typeof result.Err === "object" 
+                    ? Object.keys(result.Err)[0]
+                    : String(result.Err);
+                errorMessage = `Transfer failed: ${errMsg}`;
                 toastStore.error(errorMessage);
             }
         } catch (err) {
-            errorMessage = err.message || "Failed to send token";
+            errorMessage = err.message || "Transfer failed";
             toastStore.error(errorMessage);
         } finally {
             isValidating = false;
-            await progress.set(1);
         }
     }
 
@@ -133,229 +162,500 @@
         errorMessage = '';
     }
 
-    function formatBalance(amount: string, decimals: number = 8): string {
-        const num = parseFloat(amount);
-        if (isNaN(num)) return '0';
-        return num.toLocaleString(undefined, {
-            minimumFractionDigits: 0,
-            maximumFractionDigits: decimals
-        });
+    $: {
+        if (recipientAddress) {
+            validateAddress(recipientAddress);
+        } else {
+            addressType = null;
+            errorMessage = '';
+        }
     }
 
-    $: addressTypeText = addressType 
-        ? `Detected ${addressType.charAt(0).toUpperCase() + addressType.slice(1)} ID format`
-        : 'Enter Principal ID or Account ID';
+    $: validationMessage = (() => {
+        if (!recipientAddress) return { type: 'info', text: 'Enter a Principal ID or Account ID' };
+        if (errorMessage) return { type: 'error', text: errorMessage };
+        if (addressType === 'principal') return { type: 'success', text: 'Valid Principal ID' };
+        if (addressType === 'account') return { type: 'success', text: 'Valid Account ID' };
+        return { type: 'error', text: 'Invalid address format' };
+    })();
+
+    async function handlePaste() {
+        try {
+            const text = await navigator.clipboard.readText();
+            recipientAddress = text.trim();
+        } catch (err) {
+            toastStore.error('Failed to paste from clipboard');
+        }
+    }
 </script>
 
-<div class="send-container">
-    <div class="header">
-        <div class="token-info">
-            <img
-                src={$tokenLogoStore[token.canister_id] ?? "/tokens/not_verified.webp"}
-                alt={token.symbol}
-                class="token-logo"
-            />
-            <div class="token-details">
-                <span class="token-name">{token.symbol}</span>
-                <div class="balance-display">
-                    <span class="balance-label">Available:</span>
-                    <span class="balance-amount">{formatBalance(token.amount, token.decimals)} {token.symbol}</span>
-                </div>
+<div class="container" transition:fade>
+    <form on:submit|preventDefault={handleSubmit}>
+        <div class="id-card">
+            <div class="id-header">
+                <span>Recipient Address</span>
+                <button type="button" class="help-btn" on:click={() => showHelp = true}>
+                    <span>💡</span>
+                </button>
             </div>
-        </div>
-    </div>
 
-    <form class="send-form" on:submit|preventDefault={handleSubmit}>
-        <div class="input-group">
-            <label for="recipient" class="input-label">Recipient</label>
-            <div class="input-wrapper">
-                <input
-                    type="text"
-                    id="recipient"
-                    bind:value={recipientAddress}
-                    placeholder="Enter Principal ID or Account ID"
-                    class:error={errorMessage.includes('address')}
-                    class:valid={addressType !== null}
-                />
-                {#if addressType}
-                    <div class="validation-badge">
-                        <span class="validation-icon">✓</span>
-                        <span>{addressType}</span>
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <input
+                        type="text"
+                        bind:value={recipientAddress}
+                        placeholder="Paste address or enter manually"
+                        class:error={addressType === null && recipientAddress}
+                        class:valid={addressType !== null}
+                    />
+                    <button 
+                        type="button"
+                        class="action-button"
+                        on:click={recipientAddress ? () => recipientAddress = '' : handlePaste}
+                    >
+                        {#if recipientAddress}✕{:else}📋{/if}
+                    </button>
+                </div>
+                
+                {#if recipientAddress}
+                    <div class="validation-status" class:success={addressType !== null} class:error={addressType === null}>
+                        <span class="status-text">{validationMessage.text}</span>
                     </div>
                 {/if}
             </div>
         </div>
 
-        <div class="input-group">
-            <label class="input-label">Amount</label>
-            <div class="amount-input-wrapper">
+        <div class="id-card">
+            <div class="id-header">
+                <span>Amount</span>
+                <button type="button" class="max-btn" on:click={setMaxAmount}>MAX</button>
+            </div>
+
+            <div class="input-group">
                 <input
                     type="text"
                     inputmode="decimal"
-                    placeholder="0.00"
+                    placeholder="Enter amount"
                     bind:value={amount}
                     on:input={handleAmountInput}
                     class:error={errorMessage.includes('balance') || errorMessage.includes('Amount')}
                 />
-                <button type="button" class="max-button" on:click={setMaxAmount}>
-                    <span class="max-text">MAX</span>
-                </button>
+                <div class="balance-info">
+                    <span>Balance: {formatTokenAmount(token.balance, token.decimals)} {token.symbol}</span>
+                </div>
             </div>
         </div>
 
         {#if errorMessage}
-            <div class="error-message" in:fade>
-                <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12" y2="16" />
-                </svg>
+            <div class="error-message" transition:fade={{duration: 200}}>
                 {errorMessage}
             </div>
         {/if}
 
-        <Button
-            type="submit"
-            variant="yellow"
-            text={isValidating ? "Sending..." : `Send ${token.symbol}`}
+        <button 
+            type="submit" 
+            class="send-btn"
             disabled={isValidating || !amount || !recipientAddress}
-            loading={isValidating}
-            size="lg"
-            class="send-button"
-        />
+        >
+            Send Tokens
+        </button>
     </form>
+
+    {#if showHelp}
+        <Modal
+            isOpen={showHelp}
+            onClose={() => showHelp = false}
+            title="How to Send Tokens"
+            width="min(600px, 95vw)"
+            height="auto"
+        >
+            <div class="help-content">
+                <div class="help-section">
+                    <h3>Supported Address Types</h3>
+                    <div class="address-types">
+                        <div class="address-type">
+                            <span class="icon">🔑</span>
+                            <div>
+                                <h4>Principal ID</h4>
+                                <p>The native identifier for Internet Computer users and canisters.</p>
+                                <code class="example">
+                                    2vxsx-fae3i-kkp2w-yxca6-g44zk-<wbr>
+                                    o3br2-xjqyl-cmxgg-4kew2-2y7mh-pae
+                                </code>
+                                <ul class="features">
+                                    <li>Length: 27-29 characters with dashes</li>
+                                    <li>Used for direct canister interactions</li>
+                                    <li>Common within ecosystem</li>
+                                </ul>
+                            </div>
+                        </div>
+                        
+                        <div class="divider"></div>
+                        
+                        <div class="address-type">
+                            <span class="icon">📝</span>
+                            <div>
+                                <h4>Account ID</h4>
+                                <p>A derived address used specifically for token transactions.</p>
+                                <code class="example">
+                                    03e3d86f29a069c6f2c5c48e01bc084e<wbr>
+                                    4ea18ad02b0eec8fccadf4487183c223
+                                </code>
+                                <ul class="features">
+                                    <li>Always 64 characters (hexadecimal)</li>
+                                    <li>Derived from Principal ID</li>
+                                    <li>Used by most wallet apps (Plug, Stoic, AstroX)</li>
+                                    <li>More secure for token operations</li>
+                                    <li>Common for CEXs</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <div class="help-section">
+                    <h3>Which One Should I Use?</h3>
+                    <div class="guidance">
+                        <div class="choice-section">
+                            <h4>Use Account ID for:</h4>
+                            <ul>
+                                <li>Sending to wallet apps (NFID, NNS, Oisy)</li>
+                                <li>When you see a 64-character hex address</li>
+                                <li>Most token transfers (safer option)</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="choice-divider"></div>
+                        
+                        <div class="choice-section">
+                            <h4>Use Principal ID for:</h4>
+                            <ul>
+                                <li>Sending to canisters directly</li>
+                                <li>When you see a dashed format address</li>
+                                <li>Developer interactions</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <div class="warning-box">
+                    <span class="warning-icon">⚠️</span>
+                    <div class="warning-content">
+                        <h4>Important Safety Tips</h4>
+                        <ul>
+                            <li>Always double-check addresses before sending</li>
+                            <li>Start with small test amounts for new recipients</li>
+                            <li>Transfers cannot be reversed once confirmed</li>
+                            <li>Keep your Principal ID private if using it for authentication</li>
+                        </ul>
+                        <a href="https://internetcomputer.org/docs/current/developer-docs/defi/wallets/overview" target="_blank" rel="noopener" class="learn-more">
+                            Learn more about IC wallets →
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </Modal>
+    {/if}
+
+    {#if showConfirmation}
+        <Modal
+            isOpen={showConfirmation}
+            onClose={() => showConfirmation = false}
+            title="Confirm Your Transfer"
+            width="min(450px, 95vw)"
+            height="auto"
+        >
+            <div class="confirm-box">
+                <div class="confirm-details">
+                    <div class="transfer-summary">
+                        <div class="amount-display">
+                            <span class="amount">{amount}</span>
+                            <span class="symbol">{token.symbol}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="label">To Address</span>
+                            <span class="value address">{recipientAddress}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Address Type</span>
+                            <span class="value type">{addressType}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Network Fee</span>
+                            <span class="value">0.0001 {token.symbol}</span>
+                        </div>
+                        <div class="detail-item total">
+                            <span class="label">Total Amount</span>
+                            <span class="value">{(parseFloat(amount) + 0.0001).toFixed(4)} {token.symbol}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="confirm-actions">
+                    <button class="cancel-btn" on:click={() => showConfirmation = false}>Cancel</button>
+                    <button 
+                        class="confirm-btn" 
+                        class:loading={isValidating}
+                        on:click={confirmTransfer}
+                        disabled={isValidating}
+                    >
+                        {#if isValidating}
+                            <span class="loading-spinner"></span>
+                            Processing...
+                        {:else}
+                            Confirm Transfer
+                        {/if}
+                    </button>
+                </div>
+            </div>
+        </Modal>
+    {/if}
 </div>
 
 <style lang="postcss">
-    .send-container {
-        @apply flex flex-col;
+    .container {
+        @apply flex flex-col gap-4 py-4;
     }
 
-    .header {
-        @apply flex items-center px-6 py-4 border-b border-white/10;
+    .id-card {
+        @apply bg-white/5 rounded-xl p-4 mb-2;
     }
 
-    .token-info {
-        @apply flex items-center gap-3 flex-1;
+    .id-header {
+        @apply flex justify-between items-center mb-2 text-white/70 text-sm;
     }
 
-    .token-logo {
-        @apply w-10 h-10 rounded-full ring-2 ring-white/10;
-    }
-
-    .token-details {
-        @apply flex flex-col;
-    }
-
-    .token-name {
-        @apply text-xl font-bold text-white;
-    }
-
-    .balance-display {
-        @apply flex items-center gap-1.5 mt-0.5;
-    }
-
-    .balance-label {
-        @apply text-sm text-white/50;
-    }
-
-    .balance-amount {
-        @apply text-sm font-medium text-white/90;
-    }
-
-    .send-form {
-        @apply flex flex-col gap-6 p-6;
-    }
-
-    .input-group {
-        @apply flex flex-col gap-2;
-    }
-
-    .input-label {
-        @apply text-sm font-medium text-white/80;
+    .help-btn, .max-btn {
+        @apply px-3 py-1 bg-white/10 rounded-lg hover:bg-white/20 text-white;
     }
 
     .input-wrapper {
-        @apply relative;
+        @apply relative flex items-center;
+    }
+
+    .action-button {
+        @apply absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 
+               flex items-center justify-center rounded-lg
+               bg-white/10 text-white/70 hover:bg-white/15;
     }
 
     input {
-        @apply w-full px-4 py-3.5 bg-white/5 rounded-xl
-               border-2 border-white/10
-               text-white placeholder-white/30
-               focus:outline-none focus:border-yellow-500/50 focus:bg-white/[0.07]
-               transition-all duration-200;
-    }
-
-    input.error {
-        @apply border-red-500/50 bg-red-500/5;
-    }
-
-    input.valid {
-        @apply border-green-500/50 bg-green-500/5;
-    }
-
-    .validation-badge {
-        @apply absolute right-3 top-1/2 -translate-y-1/2
-               flex items-center gap-1.5 px-2.5 py-1
-               bg-green-500/10 text-green-400
-               rounded-full text-xs font-medium;
-    }
-
-    .validation-icon {
-        @apply text-green-400;
-    }
-
-    .amount-input-wrapper {
-        @apply relative flex gap-2;
-    }
-
-    .max-button {
-        @apply px-4 bg-yellow-500/10 text-yellow-500 rounded-xl
-               border-2 border-yellow-500/20
-               hover:bg-yellow-500/20 hover:border-yellow-500/30
-               active:bg-yellow-500/30
-               transition-all duration-200
-               text-sm font-semibold whitespace-nowrap;
-    }
-
-    .max-text {
-        @apply tracking-wide;
+        @apply w-full px-3 py-2 bg-black/20 rounded-lg text-white
+               border border-white/10 hover:border-white/20
+               focus:border-indigo-500 focus:outline-none pr-10;
+        
+        &.error { @apply border-red-500/50 bg-red-500/10; }
+        &.valid { @apply border-green-500/50; }
     }
 
     .error-message {
-        @apply flex items-center gap-2 p-4 
-               bg-red-500/10 border border-red-500/20
-               text-red-400 rounded-xl text-sm;
+        @apply text-red-400 text-sm px-2 mb-2;
     }
 
-    .error-icon {
-        @apply w-5 h-5 stroke-2;
+    .send-btn {
+        @apply w-full py-3 bg-indigo-500 text-white rounded-lg
+               font-medium hover:bg-indigo-600 disabled:opacity-50;
     }
 
-    :global(.send-button) {
-        @apply w-full mt-2 !rounded-xl !py-3.5 !text-base !font-semibold;
+    .validation-status {
+        @apply text-sm mt-1 px-1;
+        &.success { @apply text-green-400; }
+        &.error { @apply text-red-400; }
     }
 
-    @media (max-width: 640px) {
-        .header {
-            @apply px-4 py-4;
+    .balance-info {
+        @apply text-right mt-1 text-sm text-white/60;
+    }
+
+    .help-content {
+        @apply p-6 space-y-6;
+        
+        a {
+            @apply text-indigo-400 hover:text-indigo-300 hover:underline;
         }
 
-        .send-form {
-            @apply p-4 gap-4;
+        .example {
+            @apply block p-2 my-2 bg-black/20 rounded font-mono text-xs md:text-sm 
+                   text-indigo-300 break-all leading-relaxed;
+            
+            wbr {
+                @apply select-none;
+            }
         }
 
-        input {
-            @apply text-base;
+        .guidance {
+            @apply space-y-6;
+
+            .choice-section {
+                @apply bg-white/5 rounded-lg p-4;
+
+                h4 {
+                    @apply text-sm font-medium text-indigo-300 mb-3;
+                }
+
+                ul {
+                    @apply space-y-2;
+                    li {
+                        @apply flex items-center gap-2 text-sm text-white/70
+                               before:content-['•'] before:text-indigo-400;
+                    }
+                }
+            }
+
+            .choice-divider {
+                @apply border-t border-white/10 my-2;
+            }
         }
 
-        .max-button {
-            @apply px-4 py-3.5;
+        .learn-more {
+            @apply block mt-4 text-sm font-medium;
         }
 
-        :global(.send-button) {
-            @apply !py-4;
+        .help-section {
+            @apply space-y-4;
+            
+            h3 {
+                @apply text-xl font-medium text-white/90 mb-4;
+            }
         }
+
+        .divider {
+            @apply my-6 border-t border-white/10;
+        }
+
+        .address-types {
+            @apply space-y-6;
+        }
+
+        .address-type {
+            @apply flex items-start gap-4 p-5 rounded-lg bg-white/5;
+
+            .icon {
+                @apply text-2xl;
+            }
+
+            h4 {
+                @apply font-medium text-lg text-white/90 mb-2;
+            }
+
+            p {
+                @apply text-sm text-white/70 mb-2;
+            }
+
+            .example {
+                @apply block p-2 my-2 bg-black/20 rounded font-mono text-sm text-indigo-300;
+            }
+
+            .features {
+                @apply mt-3 space-y-1 text-sm text-white/70;
+                li {
+                    @apply flex items-center gap-2 before:content-['•'] before:text-indigo-400;
+                }
+            }
+        }
+
+        .warning-box {
+            @apply flex items-start gap-4 p-5 rounded-lg bg-yellow-500/10 border border-yellow-500/20;
+            
+            .warning-icon {
+                @apply text-xl;
+            }
+
+            .warning-content {
+                @apply flex-1;
+                
+                h4 {
+                    @apply font-medium text-yellow-200/90 mb-2;
+                }
+
+                ul {
+                    @apply space-y-1 text-sm text-yellow-100/80;
+                    li {
+                        @apply flex items-center gap-2 before:content-['•'] before:text-yellow-500;
+                    }
+                }
+            }
+        }
+    }
+
+    .confirm-box {
+        @apply p-6;
+        
+        .transfer-summary {
+            @apply mb-6 text-center;
+            
+            .amount-display {
+                @apply flex items-baseline justify-center gap-2;
+                
+                .amount {
+                    @apply text-3xl font-bold text-white;
+                }
+                
+                .symbol {
+                    @apply text-lg text-white/70;
+                }
+            }
+        }
+        
+        .details-grid {
+            @apply space-y-3 mb-6;
+            
+            .detail-item {
+                @apply flex justify-between items-center p-3 rounded-lg bg-white/5;
+                
+                .label {
+                    @apply text-sm text-white/60;
+                }
+                
+                .value {
+                    @apply text-sm text-white/90;
+                    
+                    &.address {
+                        @apply max-w-[200px] truncate;
+                    }
+                    
+                    &.type {
+                        @apply capitalize;
+                    }
+                }
+                
+                &.total {
+                    @apply mt-4 bg-white/10;
+                    .label, .value {
+                        @apply font-medium text-white;
+                    }
+                }
+            }
+        }
+        
+        .confirm-actions {
+            @apply flex gap-3 pt-4 border-t border-white/10;
+            
+            button {
+                @apply flex-1 py-3 rounded-lg font-medium text-center justify-center items-center gap-2;
+            }
+            
+            .cancel-btn {
+                @apply bg-white/10 hover:bg-white/15 text-white/90;
+            }
+            
+            .confirm-btn {
+                @apply bg-indigo-500 hover:bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed;
+                &.loading {
+                    @apply bg-indigo-500/50;
+                }
+            }
+        }
+    }
+
+    .loading-spinner {
+        @apply inline-block h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin;
     }
 </style>

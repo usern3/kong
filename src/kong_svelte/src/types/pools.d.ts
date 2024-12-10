@@ -5,7 +5,15 @@ declare global {
       total_tvl: bigint;
       total_24h_volume: bigint;
       total_24h_lp_fee: bigint;
+      total_24h_num_swaps: number;
     }
+
+    export interface Position {
+      id: string;
+      amount0: string;
+      amount1: string;
+      value: number;
+  } 
   
     interface Pool {
       id: string;
@@ -32,6 +40,9 @@ declare global {
       symbol: string;
       lp_fee_bps: number;
       on_kong: boolean;
+      tvl?: number;
+      volume_24h?: string;
+      apr?: number;
     }
   }
 }

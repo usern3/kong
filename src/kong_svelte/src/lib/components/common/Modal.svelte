@@ -5,6 +5,7 @@
   import { fade, scale } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Portal from "svelte-portal";
+  import Toast from "./Toast.svelte";
 
   export let isOpen = false;
   export let title: string;
@@ -16,6 +17,12 @@
   let isMobile = false;
   let modalWidth = width;
   let modalHeight = height;
+  let startX = 0;
+  let currentX = 0;
+  let isDragging = false;
+  let modalElement: HTMLDivElement;
+
+  const SLIDE_THRESHOLD = 100; // pixels to trigger close
 
   onMount(() => {
     if (browser) {
@@ -29,6 +36,45 @@
       return () => window.removeEventListener("resize", updateDimensions);
     }
   });
+
+  function handleDragStart(event: MouseEvent | TouchEvent) {
+    // Only enable dragging on mobile
+    if (!isMobile) return;
+
+    isDragging = true;
+    startX = 'touches' in event ? event.touches[0].clientX : event.clientX;
+    currentX = 0;
+    modalElement.style.transition = 'none';
+  }
+
+  function handleDragMove(event: MouseEvent | TouchEvent) {
+    // Only enable dragging on mobile
+    if (!isMobile || !isDragging) return;
+    
+    const x = 'touches' in event ? event.touches[0].clientX : event.clientX;
+    currentX = x - startX;
+    
+    // Apply transform with some resistance
+    const resistance = 0.5;
+    modalElement.style.transform = `translateX(${currentX * resistance}px)`;
+  }
+
+  function handleDragEnd() {
+    // Only enable dragging on mobile
+    if (!isMobile || !isDragging) return;
+    
+    isDragging = false;
+    modalElement.style.transition = 'transform 0.3s ease-out';
+    
+    if (Math.abs(currentX) > SLIDE_THRESHOLD) {
+      // Slide out completely before closing
+      modalElement.style.transform = `translateX(${Math.sign(currentX) * window.innerWidth}px)`;
+      setTimeout(onClose, 300);
+    } else {
+      // Spring back to original position
+      modalElement.style.transform = 'translateX(0)';
+    }
+  }
 
   function handleBackdropClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
@@ -45,6 +91,7 @@
 
 <svelte:window on:keydown={handleEscape} />
 <Portal target="#portal-target">
+  <Toast />
   {#if isOpen}
     <div
       class="modal-overlay"
@@ -55,8 +102,15 @@
       aria-labelledby="modal-title"
     >
       <div
+        bind:this={modalElement}
         class="modal-container"
-        on:click|stopPropagation
+        on:mousedown={handleDragStart}
+        on:mousemove={handleDragMove}
+        on:mouseup={handleDragEnd}
+        on:mouseleave={handleDragEnd}
+        on:touchstart={handleDragStart}
+        on:touchmove={handleDragMove}
+        on:touchend={handleDragEnd}
         transition:scale={{
           duration: 200,
           start: 0.95,
@@ -129,6 +183,7 @@
     will-change: transform;
     max-width: 100%;
     max-height: 100%;
+    touch-action: pan-x;
   }
 
   .modal-content {
@@ -148,7 +203,7 @@
   }
 
   .modal-title {
-    font-family: "Alumni Sans", sans-serif;
+    font-family: "Space Grotesk", sans-serif;
     font-size: 2rem;
     font-weight: 500;
     color: white;
@@ -212,6 +267,15 @@
     .modal-body {
       margin: 0 -1rem;
       padding: 0 1rem;
+    }
+
+    .modal-container {
+      cursor: grab;
+      user-select: none;
+    }
+
+    .modal-container:active {
+      cursor: grabbing;
     }
   }
 </style>
