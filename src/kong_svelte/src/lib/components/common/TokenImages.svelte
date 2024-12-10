@@ -28,8 +28,7 @@
       "
     >
       <img
-        class="w-full h-full rounded-full object-contain"
-        style="object-fit: contain;"
+        class="w-full h-full rounded-full object-cover"
         src={token?.logo_url ? token.logo_url : '/tokens/not_verified.webp'}
         alt={token?.symbol ?? 'Unknown Token'}
         loading="eager"
